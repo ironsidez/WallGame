@@ -1,68 +1,68 @@
-import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useGameStore, useAuthStore } from '../stores'
-import * as SharedTypes from '@wallgame/shared'
-import { StructurePalette, PlayerDashboard, ChatPanel } from '.'
+import { useEffect, useRef, useState } from 'react'
+import { useGameStore } from '../stores'
+import { useAuthStore } from '../stores/authStore'
+import { StructurePalette } from './StructurePalette'
+import { ChatPanel } from './ChatPanel'
+import { PlayerDashboard } from './PlayerDashboard'
+import { ActionType } from '@wallgame/shared'
 
-export function GameBoard() {
+interface GameBoardProps {
+  user: any
+}
+
+const CELL_SIZE = 40
+const GRID_WIDTH = 25
+const GRID_HEIGHT = 20
+
+export function GameBoard({ user }: GameBoardProps) {
   const { gameId } = useParams<{ gameId: string }>()
   const navigate = useNavigate()
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [previewPosition, setPreviewPosition] = useState<{x: number, y: number} | null>(null)
   
-  const { user } = useAuthStore()
-  const { 
-    socket,
-    connected,
-    currentGame,
-    players,
-    selectedStructure,
-    previewPosition,
+  const {
     connectSocket,
+    disconnectSocket,
     joinGame,
     leaveGame,
     placeStructure,
-    setPreviewPosition
+    selectedStructure,
+    currentGame,
+    players,
+    connected
   } = useGameStore()
 
-  useEffect(() => {
-    if (!gameId) {
-      navigate('/lobby')
-      return
-    }
+  const { isAuthenticated, token } = useAuthStore()
 
-    connectSocket()
-    
-    if (socket && connected) {
-      joinGame(gameId)
+  // Initialize socket connection and join game
+  useEffect(() => {
+    if (gameId && user && isAuthenticated && token) {
+      console.log('🎮 Attempting to connect socket and join game...')
+      
+      // Add a delay to ensure auth store is fully loaded
+      const timer = setTimeout(() => {
+        connectSocket()
+        
+        // Small delay to ensure socket is connected
+        setTimeout(() => {
+          joinGame(gameId)
+        }, 100)
+      }, 200)
+
+      return () => clearTimeout(timer)
     }
 
     return () => {
       leaveGame()
+      disconnectSocket()
     }
-  }, [gameId, socket, connected, connectSocket, joinGame, leaveGame, navigate])
+  }, [gameId, user, isAuthenticated, token])
 
+  // Canvas rendering
   useEffect(() => {
-    if (!socket) return
-
-    socket.on('error', (errorData: { message: string }) => {
-      setError(errorData.message)
-    })
-
-    return () => {
-      socket.off('error')
-    }
-  }, [socket])
-
-  useEffect(() => {
-    if (!canvasRef.current || !currentGame) return
-
-    drawGame()
-  }, [currentGame, selectedStructure, previewPosition])
-
-  const drawGame = () => {
     const canvas = canvasRef.current
-    if (!canvas || !currentGame) return
+    if (!canvas) return
 
     const ctx = canvas.getContext('2d')
     if (!ctx) return
@@ -70,138 +70,73 @@ export function GameBoard() {
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    // Set canvas size to fill container
-    const container = canvas.parentElement
-    if (container) {
-      canvas.width = container.clientWidth
-      canvas.height = container.clientHeight
-    }
-
     // Draw grid
-    drawGrid(ctx, canvas.width, canvas.height)
-
-    // Draw structures
-    if (currentGame.grid) {
-      drawStructures(ctx, currentGame.grid)
-    }
-
-    // Draw preview
-    if (selectedStructure && previewPosition) {
-      drawStructurePreview(ctx, selectedStructure, previewPosition)
-    }
-  }
-
-  const drawGrid = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    const gridSize = 40
-    ctx.strokeStyle = '#333'
+    ctx.strokeStyle = '#e0e0e0'
     ctx.lineWidth = 1
 
     // Vertical lines
-    for (let x = 0; x <= width; x += gridSize) {
+    for (let x = 0; x <= GRID_WIDTH; x++) {
       ctx.beginPath()
-      ctx.moveTo(x, 0)
-      ctx.lineTo(x, height)
+      ctx.moveTo(x * CELL_SIZE, 0)
+      ctx.lineTo(x * CELL_SIZE, GRID_HEIGHT * CELL_SIZE)
       ctx.stroke()
     }
 
     // Horizontal lines
-    for (let y = 0; y <= height; y += gridSize) {
+    for (let y = 0; y <= GRID_HEIGHT; y++) {
       ctx.beginPath()
-      ctx.moveTo(0, y)
-      ctx.lineTo(width, y)
+      ctx.moveTo(0, y * CELL_SIZE)
+      ctx.lineTo(GRID_WIDTH * CELL_SIZE, y * CELL_SIZE)
       ctx.stroke()
     }
-  }
 
-  const drawStructures = (ctx: CanvasRenderingContext2D, grid: any) => {
-    const gridSize = 40
-
-    Object.entries(grid).forEach(([key, cell]: [string, any]) => {
-      if (!cell || !cell.structure) return
-
-      const [x, y] = key.split(',').map(Number)
-      const structure = cell.structure
-
-      // Draw structure
-      ctx.fillStyle = getPlayerColor(structure.playerId)
-      ctx.fillRect(x * gridSize, y * gridSize, gridSize, gridSize)
-
-      // Draw border
-      ctx.strokeStyle = '#000'
-      ctx.lineWidth = 2
-      ctx.strokeRect(x * gridSize, y * gridSize, gridSize, gridSize)
-
-      // Draw structure type indicator
-      ctx.fillStyle = '#fff'
-      ctx.font = '20px Arial'
-      ctx.textAlign = 'center'
-      ctx.fillText(
-        getStructureSymbol(structure.type),
-        x * gridSize + gridSize / 2,
-        y * gridSize + gridSize / 2 + 7
-      )
-    })
-  }
-
-  const drawStructurePreview = (ctx: CanvasRenderingContext2D, structureType: string, position: { x: number; y: number }) => {
-    const gridSize = 40
-    
-    // Draw preview with transparency
-    ctx.globalAlpha = 0.5
-    ctx.fillStyle = getPlayerColor(user?.id || 'preview')
-    ctx.fillRect(position.x * gridSize, position.y * gridSize, gridSize, gridSize)
-    
-    ctx.strokeStyle = '#000'
-    ctx.lineWidth = 2
-    ctx.strokeRect(position.x * gridSize, position.y * gridSize, gridSize, gridSize)
-    
-    ctx.fillStyle = '#fff'
-    ctx.font = '20px Arial'
-    ctx.textAlign = 'center'
-    ctx.fillText(
-      getStructureSymbol(structureType),
-      position.x * gridSize + gridSize / 2,
-      position.y * gridSize + gridSize / 2 + 7
-    )
-    
-    ctx.globalAlpha = 1.0
-  }
-
-  const getPlayerColor = (playerId: string): string => {
-    const colors = [
-      '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', 
-      '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F'
-    ]
-    const hash = playerId.split('').reduce((a, b) => {
-      a = ((a << 5) - a) + b.charCodeAt(0)
-      return a & a
-    }, 0)
-    return colors[Math.abs(hash) % colors.length]
-  }
-
-  const getStructureSymbol = (type: string): string => {
-    const symbols: { [key: string]: string } = {
-      'basic': '■',
-      'generator': '⚡',
-      'fortress': '🏰',
-      'amplifier': '📡',
-      'scout': '👁',
-      'saboteur': '💣'
+    // Draw structures (placeholder - will be populated from game state)
+    if (currentGame?.structures) {
+      Object.values(currentGame.structures).forEach((structure: any) => {
+        ctx.fillStyle = getTeamColor(structure.teamId)
+        structure.positions?.forEach((pos: any) => {
+          ctx.fillRect(
+            pos.x * CELL_SIZE + 2,
+            pos.y * CELL_SIZE + 2,
+            CELL_SIZE - 4,
+            CELL_SIZE - 4
+          )
+        })
+      })
     }
-    return symbols[type] || '■'
+
+    // Draw preview structure
+    if (previewPosition && selectedStructure) {
+      ctx.fillStyle = 'rgba(0, 150, 255, 0.5)'
+      ctx.fillRect(
+        previewPosition.x * CELL_SIZE + 2,
+        previewPosition.y * CELL_SIZE + 2,
+        CELL_SIZE - 4,
+        CELL_SIZE - 4
+      )
+    }
+  }, [currentGame, previewPosition, selectedStructure])
+
+  const getTeamColor = (teamId: string): string => {
+    const colors = ['#ff4444', '#44ff44', '#4444ff', '#ffff44', '#ff44ff', '#44ffff']
+    const hash = teamId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
+    return colors[hash % colors.length]
   }
 
   const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!selectedStructure || !canvasRef.current) return
+    if (!selectedStructure || !canvasRef.current || !user) return
 
     const canvas = canvasRef.current
     const rect = canvas.getBoundingClientRect()
-    const x = Math.floor((event.clientX - rect.left) / 40)
-    const y = Math.floor((event.clientY - rect.top) / 40)
+    const x = Math.floor((event.clientX - rect.left) / CELL_SIZE)
+    const y = Math.floor((event.clientY - rect.top) / CELL_SIZE)
+
+    // Validate placement bounds
+    if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) return
 
     const action = {
-      type: SharedTypes.ActionType.PLACE_STRUCTURE,
-      playerId: user?.id || '',
+      type: ActionType.PLACE_STRUCTURE,
+      playerId: user.id,
       timestamp: new Date(),
       data: {
         structureType: selectedStructure,
@@ -218,10 +153,13 @@ export function GameBoard() {
 
     const canvas = canvasRef.current
     const rect = canvas.getBoundingClientRect()
-    const x = Math.floor((event.clientX - rect.left) / 40)
-    const y = Math.floor((event.clientY - rect.top) / 40)
+    const x = Math.floor((event.clientX - rect.left) / CELL_SIZE)
+    const y = Math.floor((event.clientY - rect.top) / CELL_SIZE)
 
-    setPreviewPosition({ x, y })
+    // Only update if position is valid
+    if (x >= 0 && x < GRID_WIDTH && y >= 0 && y < GRID_HEIGHT) {
+      setPreviewPosition({ x, y })
+    }
   }
 
   const handleCanvasMouseLeave = () => {
@@ -233,56 +171,43 @@ export function GameBoard() {
     navigate('/lobby')
   }
 
-  if (error) {
-    return (
-      <div className="game-error">
-        <h2>Game Error</h2>
-        <p>{error}</p>
-        <button onClick={() => navigate('/lobby')} className="btn-primary">
+  return (
+    <div className="game-board-container">
+      <div className="game-header">
+        <h1>🎮 Game: {gameId}</h1>
+        <div className="game-info">
+          <span>Player: {user?.username}</span>
+          <span className={`connection-status ${connected ? 'connected' : 'disconnected'}`}>
+            {connected ? '🟢 Connected' : '🔴 Disconnected'}
+          </span>
+          <span>Players: {players.length}</span>
+        </div>
+        <button onClick={handleLeaveGame} className="btn-secondary">
           Back to Lobby
         </button>
       </div>
-    )
-  }
-
-  if (!connected || !currentGame) {
-    return (
-      <div className="game-loading">
-        <h2>Connecting to Game...</h2>
-        <p>Please wait while we load the battlefield...</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="game-container">
-      <div className="game-header">
-        <h1>🏰 Game {gameId}</h1>
-        <div className="game-controls">
-          <span className="player-count">👥 {players.length} players</span>
-          <button onClick={handleLeaveGame} className="btn-secondary">
-            Leave Game
-          </button>
-        </div>
-      </div>
 
       <div className="game-layout">
-        <div className="game-sidebar">
-          <PlayerDashboard />
+        <div className="game-sidebar-left">
           <StructurePalette />
+          <PlayerDashboard />
         </div>
 
         <div className="game-main">
-          <canvas
-            ref={canvasRef}
-            className="game-canvas"
-            onClick={handleCanvasClick}
-            onMouseMove={handleCanvasMouseMove}
-            onMouseLeave={handleCanvasMouseLeave}
-          />
+          <div className="game-canvas-container">
+            <canvas
+              ref={canvasRef}
+              width={GRID_WIDTH * CELL_SIZE}
+              height={GRID_HEIGHT * CELL_SIZE}
+              onClick={handleCanvasClick}
+              onMouseMove={handleCanvasMouseMove}
+              onMouseLeave={handleCanvasMouseLeave}
+              className="game-canvas"
+            />
+          </div>
         </div>
 
-        <div className="game-chat">
+        <div className="game-sidebar-right">
           <ChatPanel />
         </div>
       </div>

@@ -13,12 +13,20 @@ export class DatabaseManager {
 
   async initialize(): Promise<void> {
     const config: DatabaseConfig = {
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '5432'),
-      database: process.env.DB_NAME || 'wallgame',
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD || 'password'
+      host: process.env.POSTGRES_HOST || 'localhost',
+      port: parseInt(process.env.POSTGRES_PORT || '5432'),
+      database: process.env.POSTGRES_DB || 'wallgame',
+      user: process.env.POSTGRES_USER || 'postgres',
+      password: process.env.POSTGRES_PASSWORD || 'password'
     };
+
+    // Debug logging to see what values are being used
+    console.log('🔍 Database configuration:');
+    console.log(`  Host: ${config.host}`);
+    console.log(`  Port: ${config.port}`);
+    console.log(`  Database: ${config.database}`);
+    console.log(`  User: ${config.user}`);
+    console.log(`  Password: ${config.password ? '[SET]' : '[NOT SET]'}`);
 
     this.pool = new Pool(config);
 
@@ -44,11 +52,32 @@ export class DatabaseManager {
     }
   }
 
+  /**
+   * Test database connection and return connection status
+   */
+  async testConnection(): Promise<boolean> {
+    try {
+      if (!this.pool) {
+        await this.initialize();
+      }
+      
+      const client = await this.pool!.connect();
+      const result = await client.query('SELECT NOW() as current_time');
+      client.release();
+      
+      console.log('✅ Database connection test successful:', result.rows[0].current_time);
+      return true;
+    } catch (error) {
+      console.error('❌ Database connection test failed:', error);
+      return false;
+    }
+  }
+
   private async initializeSchema(): Promise<void> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
     const queries = [
-      // Users table
+      // Users table for player authentication and profiles
       `CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         username VARCHAR(20) UNIQUE NOT NULL,
@@ -58,7 +87,7 @@ export class DatabaseManager {
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )`,
 
-      // Games table
+      // Games table for game instances and lobbies
       `CREATE TABLE IF NOT EXISTS games (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name VARCHAR(100) NOT NULL,
@@ -71,7 +100,7 @@ export class DatabaseManager {
         ended_at TIMESTAMP WITH TIME ZONE
       )`,
 
-      // Game participants table
+      // Game participants table for tracking player participation
       `CREATE TABLE IF NOT EXISTS game_participants (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         game_id UUID REFERENCES games(id) ON DELETE CASCADE,
@@ -82,7 +111,7 @@ export class DatabaseManager {
         UNIQUE(game_id, user_id)
       )`,
 
-      // Game history table for completed games
+      // Game history table for completed games and analytics
       `CREATE TABLE IF NOT EXISTS game_history (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         game_id UUID REFERENCES games(id) ON DELETE CASCADE,
@@ -94,7 +123,7 @@ export class DatabaseManager {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )`,
 
-      // Player statistics table
+      // Player statistics table for rankings and achievements
       `CREATE TABLE IF NOT EXISTS player_stats (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
@@ -107,7 +136,7 @@ export class DatabaseManager {
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )`,
 
-      // Indexes for better performance
+      // Performance indexes for grid-based spatial queries
       `CREATE INDEX IF NOT EXISTS idx_games_status ON games(status)`,
       `CREATE INDEX IF NOT EXISTS idx_game_participants_game_id ON game_participants(game_id)`,
       `CREATE INDEX IF NOT EXISTS idx_game_participants_user_id ON game_participants(user_id)`,
@@ -127,6 +156,7 @@ export class DatabaseManager {
     console.log('✅ Database schema initialized');
   }
 
+  // User management methods for authentication system
   async createUser(username: string, email: string, passwordHash: string): Promise<any> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
@@ -158,6 +188,7 @@ export class DatabaseManager {
     return result.rows[0] || null;
   }
 
+  // Game management methods for lobby and session handling
   async createGame(name: string, settings: any): Promise<any> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
@@ -190,6 +221,18 @@ export class DatabaseManager {
     await this.pool.query(query, [gameId, userId, teamId]);
   }
 
+  async removePlayerFromGame(gameId: string, userId: string): Promise<void> {
+    if (!this.pool) throw new Error('Database pool not initialized');
+
+    const query = `
+      UPDATE game_participants 
+      SET left_at = NOW()
+      WHERE game_id = $1 AND user_id = $2 AND left_at IS NULL
+    `;
+    
+    await this.pool.query(query, [gameId, userId]);
+  }
+
   async getActiveGames(): Promise<any[]> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
@@ -206,6 +249,7 @@ export class DatabaseManager {
     return result.rows;
   }
 
+  // Game persistence methods for state management
   async saveGameHistory(gameId: string, finalState: any, winnerTeamId?: string): Promise<void> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
@@ -227,6 +271,7 @@ export class DatabaseManager {
     await this.updateGameStatus(gameId, 'ended');
   }
 
+  // Player statistics methods for rankings and achievements
   async updatePlayerStats(userId: string, stats: any): Promise<void> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
@@ -244,7 +289,7 @@ export class DatabaseManager {
         total_resources_earned = player_stats.total_resources_earned + $6,
         best_game_score = GREATEST(player_stats.best_game_score, $7),
         updated_at = NOW()
-    `;
+      `;
     
     await this.pool.query(query, [
       userId,
@@ -255,5 +300,14 @@ export class DatabaseManager {
       stats.resourcesEarned || 0,
       stats.gameScore || 0
     ]);
+  }
+
+  async getPlayerStats(userId: string): Promise<any | null> {
+    if (!this.pool) throw new Error('Database pool not initialized');
+
+    const query = 'SELECT * FROM player_stats WHERE user_id = $1';
+    const result = await this.pool.query(query, [userId]);
+    
+    return result.rows[0] || null;
   }
 }

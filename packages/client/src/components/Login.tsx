@@ -1,107 +1,140 @@
 import { useState } from 'react'
-import { useAuthStore } from '../stores'
+import { useAuthStore } from '../stores/authStore'
 
-export function Login() {
-  const [isRegistering, setIsRegistering] = useState(false)
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [username, setUsername] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+interface LoginProps {}
 
+export function Login({}: LoginProps) {
   const { login, register } = useAuthStore()
+  const [activeTab, setActiveTab] = useState<'login' | 'register'>('login')
+  const [formData, setFormData] = useState({
+    username: '',
+    email: '',
+    password: '',
+    confirmPassword: ''
+  })
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState('')
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value
+    })
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-    setError('')
+    setMessage('')
 
     try {
-      if (isRegistering) {
-        await register(email, password, username)
+      if (activeTab === 'login') {
+        await login(formData.username, formData.password)
+        setMessage('Login successful!')
       } else {
-        await login(email, password)
+        // Registration - validate passwords match
+        if (formData.password !== formData.confirmPassword) {
+          setMessage('Passwords do not match')
+          return
+        }
+        await register(formData.email, formData.password, formData.username)
+        setMessage('Registration successful!')
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Authentication failed')
-    } finally {
-      setLoading(false)
+    } catch (error: any) {
+      setMessage(error.message || 'Connection error. Make sure the server is running.')
     }
+
+    setLoading(false)
   }
 
   return (
     <div className="menu-container">
       <div className="menu-card">
         <h1>🏰 WallGame</h1>
-        <p className="subtitle">Massive Multiplayer Territory Control</p>
+        <h2 className="subtitle">Massive Multiplayer RTS</h2>
         
-        <form onSubmit={handleSubmit} className="auth-form">
-          <h2>{isRegistering ? 'Create Account' : 'Login'}</h2>
+        <div className="auth-forms">
+          <div className="form-tabs">
+            <button 
+              className={`tab-button ${activeTab === 'login' ? 'active' : ''}`}
+              onClick={() => setActiveTab('login')}
+            >
+              Login
+            </button>
+            <button 
+              className={`tab-button ${activeTab === 'register' ? 'active' : ''}`}
+              onClick={() => setActiveTab('register')}
+            >
+              Register
+            </button>
+          </div>
           
-          {error && (
-            <div className="error-message">
-              {error}
-            </div>
-          )}
-
-          <div className="form-group">
-            <label htmlFor="email">Email:</label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              disabled={loading}
-            />
+          <div className="form-content">
+            <form onSubmit={handleSubmit}>
+              <div className="form-group">
+                <label>Username</label>
+                <input 
+                  type="text" 
+                  name="username"
+                  value={formData.username}
+                  onChange={handleInputChange}
+                  placeholder="Enter your username" 
+                  required
+                />
+              </div>
+              
+              {activeTab === 'register' && (
+                <div className="form-group">
+                  <label>Email</label>
+                  <input 
+                    type="email" 
+                    name="email"
+                    value={formData.email}
+                    onChange={handleInputChange}
+                    placeholder="Enter your email" 
+                    required
+                  />
+                </div>
+              )}
+              
+              <div className="form-group">
+                <label>Password</label>
+                <input 
+                  type="password" 
+                  name="password"
+                  value={formData.password}
+                  onChange={handleInputChange}
+                  placeholder="Enter your password" 
+                  required
+                />
+              </div>
+              
+              {activeTab === 'register' && (
+                <div className="form-group">
+                  <label>Confirm Password</label>
+                  <input 
+                    type="password" 
+                    name="confirmPassword"
+                    value={formData.confirmPassword}
+                    onChange={handleInputChange}
+                    placeholder="Confirm your password" 
+                    required
+                  />
+                </div>
+              )}
+              
+              <button type="submit" className="btn-primary" disabled={loading}>
+                {loading ? 'Loading...' : (activeTab === 'login' ? 'Login' : 'Register')}
+              </button>
+            </form>
+            
+            {message && (
+              <div className={`message ${message.includes('successful') ? 'success' : 'error'}`}>
+                {message}
+              </div>
+            )}
           </div>
-
-          {isRegistering && (
-            <div className="form-group">
-              <label htmlFor="username">Username:</label>
-              <input
-                id="username"
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required
-                disabled={loading}
-                minLength={3}
-                maxLength={20}
-              />
-            </div>
-          )}
-
-          <div className="form-group">
-            <label htmlFor="password">Password:</label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              disabled={loading}
-              minLength={6}
-            />
-          </div>
-
-          <button 
-            type="submit" 
-            className="btn-primary"
-            disabled={loading}
-          >
-            {loading ? 'Please wait...' : (isRegistering ? 'Create Account' : 'Login')}
-          </button>
-
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => setIsRegistering(!isRegistering)}
-            disabled={loading}
-          >
-            {isRegistering ? 'Already have an account? Login' : 'Need an account? Register'}
-          </button>
-        </form>
+        </div>
 
         <div className="game-info">
           <h3>🎮 Game Features</h3>

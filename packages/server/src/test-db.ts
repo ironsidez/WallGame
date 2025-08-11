@@ -6,11 +6,21 @@
 import { DatabaseManager } from './database/DatabaseManager';
 import { RedisManager } from './database/RedisManager';
 import dotenv from 'dotenv';
+import path from 'path';
 
-dotenv.config();
+// Load environment variables from the correct path
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 async function testConnections() {
   console.log('🧪 Testing database connections...\n');
+  
+  // Debug: Show what environment variables are loaded
+  console.log('🔍 Environment variables:');
+  console.log(`  POSTGRES_HOST: ${process.env.POSTGRES_HOST || 'NOT SET'}`);
+  console.log(`  POSTGRES_USER: ${process.env.POSTGRES_USER || 'NOT SET'}`);
+  console.log(`  POSTGRES_DB: ${process.env.POSTGRES_DB || 'NOT SET'}`);
+  console.log(`  POSTGRES_PASSWORD: ${process.env.POSTGRES_PASSWORD ? '[SET]' : 'NOT SET'}`);
+  console.log('');
   
   // Test PostgreSQL
   console.log('📊 Testing PostgreSQL connection...');

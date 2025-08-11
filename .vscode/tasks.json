@@ -59,6 +59,14 @@
             "args": ["ts-node", "packages/server/src/test-db.ts"],
             "group": "test",
             "problemMatcher": []
+        },
+        {
+            "label": "Run All Tests",
+            "type": "shell",
+            "command": "npx",
+            "args": ["playwright", "test", "--headed"],
+            "group": "test",
+            "problemMatcher": []
         }
     ]
 }

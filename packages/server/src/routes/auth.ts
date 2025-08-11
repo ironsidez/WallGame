@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { DatabaseManager } from '../database/DatabaseManager';
+import { secureLog, maskJwtToken } from '../utils/security';
 
 const router = express.Router();
 
@@ -39,9 +40,13 @@ router.post('/register', async (req: any, res: any) => {
     const user = await databaseManager.createUser(username, email, passwordHash);
 
     // Generate JWT token
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      throw new Error('JWT_SECRET environment variable is required');
+    }
     const token = jwt.sign(
       { userId: user.id, username: user.username },
-      process.env.JWT_SECRET || 'default-secret',
+      jwtSecret,
       { expiresIn: '24h' }
     );
 
@@ -54,8 +59,14 @@ router.post('/register', async (req: any, res: any) => {
       },
       token
     });
+
+    secureLog('User registered successfully:', { 
+      userId: user.id, 
+      username: user.username,
+      token: maskJwtToken(token)
+    });
   } catch (error) {
-    console.error('Registration error:', error);
+    secureLog('Registration error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -82,9 +93,13 @@ router.post('/login', async (req: any, res: any) => {
     }
 
     // Generate JWT token
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      throw new Error('JWT_SECRET environment variable is required');
+    }
     const token = jwt.sign(
       { userId: user.id, username: user.username },
-      process.env.JWT_SECRET || 'default-secret',
+      jwtSecret,
       { expiresIn: '24h' }
     );
 
@@ -97,8 +112,14 @@ router.post('/login', async (req: any, res: any) => {
       },
       token
     });
+
+    secureLog('User logged in successfully:', { 
+      userId: user.id, 
+      username: user.username,
+      token: maskJwtToken(token)
+    });
   } catch (error) {
-    console.error('Login error:', error);
+    secureLog('Login error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -112,7 +133,12 @@ export function authenticateToken(req: any, res: any, next: any) {
     return res.status(401).json({ error: 'Access token required' });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET || 'default-secret', (err: any, user: any) => {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    return res.status(500).json({ error: 'Server configuration error' });
+  }
+
+  jwt.verify(token, jwtSecret, (err: any, user: any) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
@@ -136,7 +162,7 @@ router.get('/profile', authenticateToken, async (req: any, res: any) => {
       createdAt: user.created_at
     });
   } catch (error) {
-    console.error('Profile error:', error);
+    secureLog('Profile error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

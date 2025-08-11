@@ -1,27 +1,16 @@
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { GameLobby, GameBoard, Login } from './components'
-import { useAuthStore } from './stores'
+import { useAuthStore } from './stores/authStore'
 import './App.css'
 
 function App() {
-  const { isAuthenticated, checkAuth } = useAuthStore()
-  const [loading, setLoading] = useState(true)
+  const { isAuthenticated, user, checkAuth, logout } = useAuthStore()
 
+  // Check if user is already logged in on app start
   useEffect(() => {
-    checkAuth().finally(() => setLoading(false))
+    checkAuth()
   }, [checkAuth])
-
-  if (loading) {
-    return (
-      <div className="menu-container">
-        <div className="menu-card">
-          <h2>Loading WallGame...</h2>
-          <p>Preparing your massive multiplayer RTS experience...</p>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <Router>
@@ -34,8 +23,8 @@ function App() {
             </>
           ) : (
             <>
-              <Route path="/lobby" element={<GameLobby />} />
-              <Route path="/game/:gameId" element={<GameBoard />} />
+              <Route path="/lobby" element={<GameLobby user={user} onLogout={logout} />} />
+              <Route path="/game/:gameId" element={<GameBoard user={user} />} />
               <Route path="*" element={<Navigate to="/lobby" />} />
             </>
           )}

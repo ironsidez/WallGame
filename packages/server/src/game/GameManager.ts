@@ -10,7 +10,8 @@ import {
   evaluateConflict,
   canPlaceStructure,
   positionToKey,
-  updateGridBounds
+  updateGridBounds,
+  GamePhase
 } from '@wallgame/shared';
 import { RedisManager } from '../database/RedisManager';
 import { DatabaseManager } from '../database/DatabaseManager';
@@ -94,6 +95,65 @@ export class GameManager {
     await this.saveGameState(gameState);
     
     return true;
+  }
+
+  /**
+   * Removes a player from a game
+   */
+  async removePlayerFromGame(gameId: string, playerId: string): Promise<boolean> {
+    const gameState = await this.getGameState(gameId);
+    if (!gameState) return false;
+
+    const removed = gameState.players.delete(playerId);
+    if (removed) {
+      await this.saveGameState(gameState);
+    }
+    
+    return removed;
+  }
+
+  /**
+   * Initializes a game state if it doesn't exist
+   */
+  async initializeGame(gameId: string): Promise<void> {
+    const existingState = await this.getGameState(gameId);
+    if (existingState) return;
+
+    // Create initial game state
+    const gameState: GameState = {
+      id: gameId,
+      players: new Map(),
+      teams: new Map(),
+      structures: new Map(),
+      grid: {
+        cells: new Map(),
+        bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 }
+      },
+      settings: {
+        maxPlayers: 100,
+        gridSize: 2000,
+        resourceGenerationRate: 1,
+        structureCostMultiplier: 1,
+        captureRadius: 1,
+        fogOfWar: false,
+        allowAlliances: true
+      },
+      gamePhase: GamePhase.WAITING,
+      startTime: new Date(),
+      lastUpdate: new Date()
+    };
+
+    await this.saveGameState(gameState);
+  }
+
+  /**
+   * Gets all players in a game
+   */
+  async getGamePlayers(gameId: string): Promise<Player[]> {
+    const gameState = await this.getGameState(gameId);
+    if (!gameState) return [];
+
+    return Array.from(gameState.players.values());
   }
 
   /**

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuthStore, useGameStore } from '../stores'
+import { useAuthStore } from '../stores/authStore'
 
 interface GameRoom {
   id: string
@@ -11,51 +11,28 @@ interface GameRoom {
   createdAt: string
 }
 
-export function GameLobby() {
+interface GameLobbyProps {
+  user: any
+  onLogout: () => void
+}
+
+export function GameLobby({ user, onLogout }: GameLobbyProps) {
   const navigate = useNavigate()
-  const { user, logout } = useAuthStore()
-  const { socket, connectSocket, disconnectSocket } = useGameStore()
+  const { token } = useAuthStore()
   const [games, setGames] = useState<GameRoom[]>([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [newGameName, setNewGameName] = useState('')
 
   useEffect(() => {
-    connectSocket()
     loadGames()
-
-    return () => {
-      disconnectSocket()
-    }
-  }, [connectSocket, disconnectSocket])
-
-  useEffect(() => {
-    if (!socket) return
-
-    socket.on('game-list-updated', (updatedGames: GameRoom[]) => {
-      setGames(updatedGames)
-    })
-
-    socket.on('game-created', (game: GameRoom) => {
-      setGames(prev => [...prev, game])
-    })
-
-    socket.on('game-joined', (gameId: string) => {
-      navigate(`/game/${gameId}`)
-    })
-
-    return () => {
-      socket.off('game-list-updated')
-      socket.off('game-created')
-      socket.off('game-joined')
-    }
-  }, [socket, navigate])
+  }, [])
 
   const loadGames = async () => {
     try {
       const response = await fetch('http://localhost:3001/api/game/active', {
         headers: {
-          'Authorization': `Bearer ${useAuthStore.getState().token}`,
+          'Authorization': `Bearer ${token}`,
         },
       })
 
@@ -80,15 +57,15 @@ export function GameLobby() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${useAuthStore.getState().token}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({ name: newGameName.trim() }),
       })
 
       if (response.ok) {
-        const game = await response.json()
+        const result = await response.json()
         setNewGameName('')
-        navigate(`/game/${game.id}`)
+        navigate(`/game/${result.game.id}`)
       } else {
         const error = await response.json()
         alert(error.message || 'Failed to create game')
@@ -106,7 +83,7 @@ export function GameLobby() {
       const response = await fetch(`http://localhost:3001/api/game/${gameId}/join`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${useAuthStore.getState().token}`,
+          'Authorization': `Bearer ${token}`,
         },
       })
 
@@ -123,8 +100,7 @@ export function GameLobby() {
   }
 
   const handleLogout = () => {
-    logout()
-    navigate('/login')
+    onLogout()
   }
 
   if (loading) {

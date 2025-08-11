@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { io, Socket } from 'socket.io-client'
 import { GameState, GameAction, Player } from '@wallgame/shared'
+import { useAuthStore } from './authStore'
 
 interface GameStore {
   // Socket connection
@@ -42,9 +43,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { socket } = get()
     if (socket?.connected) return
 
+    // Get the token from the auth store
+    const token = useAuthStore.getState().token
+    console.log('🔍 Token from authStore:', token ? 'FOUND' : 'NOT FOUND')
+    
+    if (token) {
+      console.log('🔍 Token preview:', token.substring(0, 50) + '...')
+    }
+
+    console.log('🔍 Final token for socket:', token ? 'YES' : 'NO')
+
     const newSocket = io('http://localhost:3001', {
       auth: {
-        token: JSON.parse(localStorage.getItem('wallgame-auth') || '{}').state?.token
+        token: token
       }
     })
 
@@ -101,11 +112,27 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
   },
 
-  joinGame: (gameId: string) => {
+  joinGame: async (gameId: string) => {
     const { socket } = get()
     if (socket) {
       socket.emit('join-game', { gameId })
       set({ isPlacing: false, selectedStructure: null, previewPosition: null })
+      
+      // Also fetch players via API as backup
+      try {
+        const token = useAuthStore.getState().token
+        const response = await fetch(`http://localhost:3001/api/game/${gameId}/players`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+        if (response.ok) {
+          const players = await response.json()
+          set({ players })
+        }
+      } catch (error) {
+        console.error('Failed to fetch players:', error)
+      }
     }
   },
 

@@ -36,6 +36,10 @@ A browser-based real-time strategy game supporting hundreds of players simultane
 │   ├── client/          # React frontend
 │   ├── server/          # Node.js backend
 │   └── shared/          # Shared game logic and types
+├── tests/               # All testing files and results
+│   ├── automated-tester.js
+│   ├── ai-screenshot-analyzer.js
+│   └── TESTING_GUIDE.md
 ├── docs/                # Game design and API documentation
 └── docker/              # Container configurations
 ```
@@ -51,7 +55,24 @@ npm run dev
 
 # Build for production
 npm run build
+
+# Run automated tests
+npx playwright test tests/automated-tester.js --headed
+
+# Analyze test results with AI
+node tests/ai-screenshot-analyzer.js
 ```
+
+## Testing
+
+The project includes a comprehensive testing system with AI-powered screenshot analysis:
+
+- **Automated Testing**: Complete game flow testing with Playwright
+- **Screenshot Analysis**: AI visual analysis using OpenAI or Anthropic APIs
+- **Metadata Fallback**: Works without API keys using metadata analysis
+- **Visual Reports**: HTML reports with detailed results
+
+See [tests/TESTING_GUIDE.md](tests/TESTING_GUIDE.md) for complete documentation.
 
 ## Game Features
 

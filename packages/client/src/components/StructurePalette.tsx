@@ -4,12 +4,12 @@ export function StructurePalette() {
   const { selectedStructure, selectStructure } = useGameStore()
 
   const structures = [
-    { type: 'basic', name: 'Basic Block', symbol: '■', cost: 1, description: 'Simple building block' },
-    { type: 'generator', name: 'Generator', symbol: '⚡', cost: 5, description: 'Produces resources over time' },
-    { type: 'fortress', name: 'Fortress', symbol: '🏰', cost: 10, description: 'High defense structure' },
-    { type: 'amplifier', name: 'Amplifier', symbol: '📡', cost: 8, description: 'Boosts nearby structures' },
-    { type: 'scout', name: 'Scout', symbol: '👁', cost: 3, description: 'Reveals fog of war' },
-    { type: 'saboteur', name: 'Saboteur', symbol: '💣', cost: 6, description: 'Weakens enemy structures' },
+    { type: 'BASIC', name: 'Basic Block', symbol: '■', cost: 5, description: 'Simple building block' },
+    { type: 'GENERATOR', name: 'Generator', symbol: '⚡', cost: 30, description: 'Produces resources over time' },
+    { type: 'FORTRESS', name: 'Fortress', symbol: '🏰', cost: 50, description: 'High defense structure' },
+    { type: 'AMPLIFIER', name: 'Amplifier', symbol: '📡', cost: 40, description: 'Boosts nearby structures' },
+    { type: 'SCOUT', name: 'Scout', symbol: '👁', cost: 20, description: 'Reveals fog of war' },
+    { type: 'SABOTEUR', name: 'Saboteur', symbol: '💣', cost: 35, description: 'Weakens enemy structures' },
   ]
 
   return (
@@ -34,7 +34,15 @@ export function StructurePalette() {
         <div className="structure-info">
           <h4>Selected Structure</h4>
           <div className="selected-structure">
-            {structures.find(s => s.type === selectedStructure)?.name}
+            <div className="structure-details">
+              <h5>{structures.find(s => s.type === selectedStructure)?.name}</h5>
+              <p>{structures.find(s => s.type === selectedStructure)?.description}</p>
+              <div className="structure-stats">
+                <span>💰 Cost: {structures.find(s => s.type === selectedStructure)?.cost}</span>
+                <span>⚔️ Value: 20</span>
+                <span>❤️ Health: 100</span>
+              </div>
+            </div>
           </div>
           <p className="structure-help">
             Click on the game board to place this structure

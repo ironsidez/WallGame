@@ -111,13 +111,6 @@ export interface GameSettings {
 }
 
 // Game actions
-export interface GameAction {
-  type: ActionType;
-  playerId: string;
-  timestamp: Date;
-  data: any;
-}
-
 export enum ActionType {
   PLACE_STRUCTURE = 'place_structure',
   REMOVE_STRUCTURE = 'remove_structure',
@@ -126,6 +119,13 @@ export enum ActionType {
   FORM_ALLIANCE = 'form_alliance',
   BREAK_ALLIANCE = 'break_alliance',
   CHAT_MESSAGE = 'chat_message'
+}
+
+export interface GameAction {
+  type: ActionType;
+  playerId: string;
+  timestamp: Date;
+  data: any;
 }
 
 export interface PlaceStructureAction {
