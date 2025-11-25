@@ -149,7 +149,6 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
       if (response.ok) {
         // Refresh the game list
         await loadGames()
-        alert('Game deleted successfully')
       } else {
         const error = await response.json()
         alert(error.error || 'Failed to delete game')

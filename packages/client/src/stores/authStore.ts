@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { useGameStore } from './gameStore'
 
 interface User {
   id: string
@@ -84,6 +85,9 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: () => {
+        // Disconnect socket before clearing auth state
+        useGameStore.getState().disconnectSocket()
+        
         set({
           user: null,
           token: null,

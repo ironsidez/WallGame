@@ -127,41 +127,18 @@ class BasePage {
   }
 
   /**
-   * Gather and log comprehensive page information for debugging - more efficient combined version
+   * Gather and log comprehensive page information for debugging - condensed single-line format
    */
   async getAndLogFullPageInfo(stepName) {
     const info = await this.getFullPageInfo();
     const maskedInfo = maskSensitiveData(info);
     
-    console.log(`\n📋 ${stepName.toUpperCase()} FULL PAGE INFO:`);
-    console.log('URL:', maskedInfo.url);
-    console.log('Title:', maskedInfo.title);
+    // Condensed format: one line per step
+    const buttons = maskedInfo.buttons.map(btn => btn.text).join(', ');
+    const inputs = maskedInfo.inputs.map(i => i.name || i.type).join(', ');
+    const authStatus = maskedInfo.localStorage.user ? 'logged-in' : 'logged-out';
     
-    if (maskedInfo.headings.length > 0) {
-      console.log('Headings:', maskedInfo.headings);
-    }
-    
-    if (maskedInfo.messages.length > 0) {
-      console.log('Messages:', JSON.stringify(maskedInfo.messages, null, 2));
-    }
-    
-    if (maskedInfo.buttons.length > 0) {
-      console.log('Buttons:', maskedInfo.buttons.map(btn => `"${btn.text}" (${btn.disabled ? 'disabled' : 'enabled'})`));
-    }
-    
-    if (maskedInfo.inputs.length > 0) {
-      console.log('Inputs:', maskedInfo.inputs.map(input => {
-        const displayValue = input.value ? '[FILLED]' : `"${input.placeholder || 'empty'}"`;
-        return `${input.name || input.type}: ${displayValue}`;
-      }));
-    }
-    
-    console.log('Auth state:', {
-      user: maskedInfo.localStorage.user,
-      token: maskedInfo.localStorage.token,
-      auth: maskedInfo.localStorage.auth
-    });
-    console.log('Timestamp:', maskedInfo.timestamp);
+    console.log(`📋 ${stepName} | ${maskedInfo.url} | buttons: [${buttons}] | inputs: [${inputs}] | auth: ${authStatus}`);
     
     return info;
   }
@@ -188,8 +165,12 @@ class BasePage {
       // Post-action validation and logging
       await this.waitForStable(options.stabilityTimeout || 200);
       
+      // Extract step number for cleaner logging (e.g., "Step-4-submit-login" → "Step-4")
+      const stepMatch = stepName.match(/^(Step-\d+)/i);
+      const stepLabel = stepMatch ? `${stepMatch[1]}-Page-Data` : stepName;
+      
       // Capture and log post-action state
-      const postActionInfo = await this.getAndLogFullPageInfo(`POST-${stepName}`);
+      const postActionInfo = await this.getAndLogFullPageInfo(stepLabel);
       
       // Take post-action screenshot
       await this.takeScreenshot(`${stepName}`);
@@ -210,8 +191,12 @@ class BasePage {
       // Take error screenshot
       await this.takeScreenshot(`${stepName}-error`);
       
+      // Extract step number for cleaner logging
+      const stepMatch = stepName.match(/^(Step-\d+)/i);
+      const stepLabel = stepMatch ? `${stepMatch[1]}-Error` : `ERROR-${stepName}`;
+      
       // Log error state
-      await this.getAndLogFullPageInfo(`ERROR-${stepName}`);
+      await this.getAndLogFullPageInfo(stepLabel);
       
       throw new Error(`Action '${stepName}' failed: ${error.message}`);
     }

@@ -27,6 +27,8 @@ class LobbyPage extends BasePage {
    */
   async verifyOnLobby(stepName = 'verify-on-lobby') {
     return await this.executeAction(stepName, 'lobby', async () => {
+      // Wait for lobby URL before validating
+      await this.page.waitForURL(/\/lobby/, { timeout: 10000 });
       await this.validateExpectedPage('lobby');
       console.log('✅ Confirmed on lobby page');
       return { onLobby: true, url: this.page.url() };
@@ -103,6 +105,26 @@ class LobbyPage extends BasePage {
       console.log(`\n🔢 VERIFYING PLAYER COUNT FOR: ${gameName}`);
       console.log(`   Expected: ${expectedOnline}/${expectedTotal}`);
       
+      // Wait for expected player count to appear (with timeout)
+      const expectedPattern = `${expectedOnline}/${expectedTotal}`;
+      try {
+        await this.page.waitForFunction(
+          ({ searchName, expected }) => {
+            const bodyText = document.body.textContent || '';
+            // Check if game exists and has the expected count
+            if (!bodyText.includes(searchName)) return false;
+            // Find the count pattern near the game name
+            const gameSection = bodyText.substring(bodyText.indexOf(searchName), bodyText.indexOf(searchName) + 200);
+            return gameSection.includes(expected);
+          },
+          { searchName: gameName, expected: expectedPattern },
+          { timeout: 5000 }
+        );
+      } catch (e) {
+        // Timeout waiting - will fail in the check below with actual values
+        console.log(`   ⏰ Timed out waiting for ${expectedPattern}`);
+      }
+      
       // Find the game row by name and extract player count
       const gameInfo = await this.page.evaluate((searchName) => {
         // Find all game rows/items in the list
@@ -149,14 +171,7 @@ class LobbyPage extends BasePage {
       console.log('📋 Game info found:', JSON.stringify(gameInfo, null, 2));
       
       if (!gameInfo.found) {
-        console.log('❌ Game not found in list');
-        return { 
-          success: false, 
-          reason: 'game not found',
-          gameName,
-          expectedOnline,
-          expectedTotal 
-        };
+        throw new Error(`Game "${gameName}" not found in list`);
       }
       
       const countsMatch = gameInfo.online === expectedOnline && gameInfo.total === expectedTotal;
@@ -164,11 +179,11 @@ class LobbyPage extends BasePage {
       if (countsMatch) {
         console.log(`✅ Player counts match: ${gameInfo.online}/${gameInfo.total}`);
       } else {
-        console.log(`❌ Player counts MISMATCH: got ${gameInfo.online}/${gameInfo.total}, expected ${expectedOnline}/${expectedTotal}`);
+        throw new Error(`Player count mismatch for "${gameName}": got ${gameInfo.online}/${gameInfo.total}, expected ${expectedOnline}/${expectedTotal}`);
       }
       
       return {
-        success: countsMatch,
+        success: true,
         actualOnline: gameInfo.online,
         actualTotal: gameInfo.total,
         expectedOnline,
@@ -222,6 +237,79 @@ class LobbyPage extends BasePage {
         
         console.log('❌ Could not find Join button for game');
         return { success: false, reason: 'join button not found', gameName };
+      }
+    });
+  }
+
+  /**
+   * Delete a game by name (admin only)
+   * @param {string} gameName - Name of the game to delete
+   */
+  async deleteGame(gameName, stepName = 'delete-game') {
+    return await this.executeAction(stepName, 'lobby', async () => {
+      console.log(`\n🗑️ DELETING GAME: ${gameName}`);
+      
+      // Set up dialog handler to accept the confirm dialog
+      this.page.once('dialog', async dialog => {
+        console.log(`   Dialog appeared: "${dialog.message()}"`);
+        await dialog.accept();
+        console.log('   ✅ Confirmed deletion');
+      });
+      
+      // Find the game row and click its Delete button
+      const deleted = await this.page.evaluate((searchName) => {
+        const gameElements = document.querySelectorAll('.game-item, [class*="game-item"], tr, .game-row, div');
+        
+        for (const el of gameElements) {
+          const text = el.textContent || '';
+          if (text.includes(searchName)) {
+            // Look for Delete button within this element
+            const deleteBtn = Array.from(el.querySelectorAll('button')).find(btn => 
+              btn.textContent.includes('Delete')
+            );
+            if (deleteBtn) {
+              deleteBtn.click();
+              return { clicked: true };
+            }
+          }
+        }
+        return { clicked: false };
+      }, gameName);
+      
+      if (deleted.clicked) {
+        // Wait for the game list to refresh (game should disappear)
+        await this.page.waitForTimeout(500);
+        console.log('✅ Delete button clicked');
+        return { success: true, gameName };
+      } else {
+        console.log('❌ Could not find Delete button for game');
+        return { success: false, reason: 'delete button not found', gameName };
+      }
+    });
+  }
+
+  /**
+   * Verify a game no longer exists in the list
+   * @param {string} gameName - Name of the game that should be gone
+   */
+  async verifyGameDeleted(gameName, stepName = 'verify-game-deleted') {
+    return await this.executeAction(stepName, 'lobby', async () => {
+      console.log(`\n🔍 VERIFYING GAME DELETED: ${gameName}`);
+      
+      // Wait a moment for the list to update
+      await this.page.waitForTimeout(500);
+      
+      const gameExists = await this.page.evaluate((searchName) => {
+        const pageText = document.body.textContent || '';
+        return pageText.includes(searchName);
+      }, gameName);
+      
+      if (!gameExists) {
+        console.log('✅ Game successfully deleted - not found in list');
+        return { success: true, deleted: true, gameName };
+      } else {
+        console.log('❌ Game still exists in list');
+        return { success: false, deleted: false, gameName };
       }
     });
   }

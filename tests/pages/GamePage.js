@@ -31,6 +31,8 @@ class GamePage extends BasePage {
    */
   async verifyInGame(stepName = 'verify-in-game') {
     return await this.executeAction(stepName, 'game', async () => {
+      // Wait for game URL before validating
+      await this.page.waitForURL(/\/game\//, { timeout: 10000 });
       await this.validateExpectedPage('game');
       console.log('✅ Confirmed in active game');
       return { inGame: true, url: this.page.url() };
@@ -49,8 +51,15 @@ class GamePage extends BasePage {
       console.log('\n🔍 VERIFYING IN-GAME INFO');
       console.log(`   Expected:`, JSON.stringify(expected));
       
-      // Wait a moment for state to update
-      await this.waitForStable(500);
+      // Wait for game data to load (not "Loading...")
+      await this.page.waitForFunction(
+        (selectors) => {
+          const nameEl = document.querySelector(selectors.gameName);
+          return nameEl && !nameEl.textContent?.includes('Loading');
+        },
+        this.selectors,
+        { timeout: 10000 }
+      );
       
       const gameInfo = await this.page.evaluate((selectors) => {
         const result = {
@@ -123,16 +132,17 @@ class GamePage extends BasePage {
       if (allMatch) {
         console.log('✅ All game info matches expected values');
       } else {
-        console.log('❌ Some game info does not match:');
+        const mismatches = [];
         for (const [key, value] of Object.entries(results)) {
           if (!value.match) {
-            console.log(`   ${key}: expected "${value.expected}", got "${value.actual}"`);
+            mismatches.push(`${key}: expected "${value.expected}", got "${value.actual}"`);
           }
         }
+        throw new Error(`Game info mismatch: ${mismatches.join(', ')}`);
       }
       
       return {
-        success: allMatch,
+        success: true,
         gameInfo,
         results
       };

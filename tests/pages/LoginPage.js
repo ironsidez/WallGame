@@ -33,6 +33,8 @@ class LoginPage extends BasePage {
 
   async verifyOnLogin(stepName = 'verify-on-login') {
     return await this.executeAction(stepName, 'login', async () => {
+      // Wait for login URL before validating
+      await this.page.waitForURL(/\/login/, { timeout: 10000 });
       await this.validateExpectedPage('login');
       console.log('✅ Confirmed on login page');
       return { onLogin: true, url: this.page.url() };

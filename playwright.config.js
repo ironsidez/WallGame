@@ -15,6 +15,8 @@ module.exports = defineConfig({
   workers: process.env.CI ? 1 : undefined,
   
   reporter: [
+    // Custom summary reporter for easy scanning
+    ['./tests/utils/SummaryReporter.js'],
     // JSON reporter for programmatic access
     ['json', { outputFile: `${testRunDir}/test-results.json` }],
     // HTML reporter without auto-opening browser
