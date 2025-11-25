@@ -11,8 +11,14 @@ class TestContext {
     this.apiRequests = [];
     this.apiResponses = [];
     
+    // Use TEST_TIMESTAMP from npm script to ensure all artifacts go to same folder
+    const timestamp = process.env.TEST_TIMESTAMP || 
+      new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    
     // Debug logging
     console.log('🔍 TestContext Debug Info:');
+    console.log('  TEST_TIMESTAMP env:', process.env.TEST_TIMESTAMP);
+    console.log('  Using timestamp:', timestamp);
 
     if (testInfo) {
       console.log('  testInfo available:', !!testInfo);
@@ -20,10 +26,11 @@ class TestContext {
       console.log('  testInfo.title:', testInfo.title);
     }
 
-    this.testDir = path.dirname(testInfo.outputDir);
+    // Always use the TEST_TIMESTAMP folder for consistency
+    this.testDir = path.join(process.cwd(), 'tests', 'test-results', timestamp);
     this.screenshotsDir = path.join(this.testDir, 'screenshots');
     
-    console.log('  Extracted timestamp directory:', this.testDir);
+    console.log('  Test directory:', this.testDir);
     
     this.setupDirectories();
   }

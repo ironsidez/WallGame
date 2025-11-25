@@ -1,14 +1,10 @@
 // @ts-check
 const { defineConfig, devices } = require('@playwright/test');
 
-// Generate timestamp for this test run and make it available globally
-// Cache the timestamp to prevent multiple executions from creating different values
-const timestamp = process.env.PLAYWRIGHT_TIMESTAMP_CACHE || 
-  (() => {
-    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    process.env.PLAYWRIGHT_TIMESTAMP_CACHE = ts;
-    return ts;
-  })();
+// Timestamp is set by npm run test script BEFORE playwright starts
+// This ensures all reporters and outputs use the exact same folder
+const timestamp = process.env.TEST_TIMESTAMP || 
+  new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 const testRunDir = `tests/test-results/${timestamp}`;
 
 module.exports = defineConfig({
@@ -17,6 +13,7 @@ module.exports = defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
+  
   reporter: [
     // JSON reporter for programmatic access
     ['json', { outputFile: `${testRunDir}/test-results.json` }],

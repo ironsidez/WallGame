@@ -1,6 +1,7 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import { io, Socket } from 'socket.io-client'
-import { GameState, GameAction, Player } from '@wallgame/shared'
+import { GameState, Player } from '@wallgame/shared'
 import { useAuthStore } from './authStore'
 
 interface GameStore {
@@ -10,34 +11,38 @@ interface GameStore {
   
   // Game state
   currentGame: GameState | null
+  currentGameId: string | null // Add this to track which game we're in
   players: Player[]
   currentPlayer: Player | null
   
   // UI state
-  selectedStructure: string | null
-  isPlacing: boolean
-  previewPosition: { x: number; y: number } | null
+  selectedUnit: string | null
+  selectedCity: string | null
+  selectedBuilding: string | null
   
   // Actions
   connectSocket: () => void
   disconnectSocket: () => void
   joinGame: (gameId: string) => void
   leaveGame: () => void
-  placeStructure: (action: GameAction) => void
-  selectStructure: (structureType: string) => void
-  setPreviewPosition: (position: { x: number; y: number } | null) => void
+  selectUnit: (unitId: string | null) => void
+  selectCity: (cityId: string | null) => void
+  selectBuilding: (buildingId: string | null) => void
 }
 
-export const useGameStore = create<GameStore>((set, get) => ({
-  // Initial state
-  socket: null,
-  connected: false,
-  currentGame: null,
-  players: [],
-  currentPlayer: null,
-  selectedStructure: null,
-  isPlacing: false,
-  previewPosition: null,
+export const useGameStore = create<GameStore>()(
+  persist(
+    (set, get) => ({
+      // Initial state
+      socket: null,
+      connected: false,
+      currentGame: null,
+      currentGameId: null,
+      players: [],
+      currentPlayer: null,
+      selectedUnit: null,
+      selectedCity: null,
+      selectedBuilding: null,
 
   connectSocket: () => {
     const { socket } = get()
@@ -86,13 +91,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
         console.error('Action failed:', result.message)
         alert(result.message || 'Action failed')
       }
-      set({ isPlacing: false, previewPosition: null })
     })
 
     newSocket.on('action-failed', (error: { message: string }) => {
       console.error('Action failed:', error.message)
       alert(error.message)
-      set({ isPlacing: false, previewPosition: null })
     })
 
     set({ socket: newSocket })
@@ -116,7 +119,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { socket } = get()
     if (socket) {
       socket.emit('join-game', { gameId })
-      set({ isPlacing: false, selectedStructure: null, previewPosition: null })
+      set({ 
+        currentGameId: gameId, // Save the game ID to localStorage
+        selectedUnit: null, 
+        selectedCity: null, 
+        selectedBuilding: null 
+      })
       
       // Also fetch players via API as backup
       try {
@@ -137,52 +145,54 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   leaveGame: () => {
-    const { socket } = get()
-    if (socket) {
-      socket.emit('leave-game')
+    const { socket, currentGameId } = get()
+    if (socket && currentGameId) {
+      // Get current user ID from auth store
+      const authState = useAuthStore.getState()
+      const userId = authState.user?.id
+      
+      socket.emit('leave-game', { 
+        gameId: currentGameId, 
+        playerId: userId 
+      })
+      
       set({ 
-        currentGame: null, 
+        currentGame: null,
+        currentGameId: null, // Clear the persisted game ID 
         players: [], 
         currentPlayer: null,
-        selectedStructure: null,
-        isPlacing: false,
-        previewPosition: null
+        selectedUnit: null,
+        selectedCity: null,
+        selectedBuilding: null
       })
     }
   },
 
-  placeStructure: (action: GameAction) => {
-    const { socket } = get()
-    if (socket && action) {
-      set({ isPlacing: true })
-      socket.emit('game-action', action)
+  selectUnit: (unitId: string | null) => {
+    set({ selectedUnit: unitId, selectedCity: null, selectedBuilding: null })
+  },
+
+  selectCity: (cityId: string | null) => {
+    set({ selectedCity: cityId, selectedUnit: null, selectedBuilding: null })
+  },
+
+  selectBuilding: (buildingId: string | null) => {
+    set({ selectedBuilding: buildingId, selectedUnit: null, selectedCity: null })
+  },
+    }),
+    {
+      name: 'game-storage',
+      partialize: (state) => ({
+        currentGameId: state.currentGameId, // Only persist the game ID
+      }),
     }
-  },
-
-  selectStructure: (structureType: string) => {
-    set({ 
-      selectedStructure: structureType,
-      isPlacing: false,
-      previewPosition: null
-    })
-  },
-
-  setPreviewPosition: (position: { x: number; y: number } | null) => {
-    set({ previewPosition: position })
-  },
-}))
+  )
+)
 
 // Socket event helpers
 export const emitChatMessage = (message: string) => {
   const socket = useGameStore.getState().socket
   if (socket) {
     socket.emit('chat-message', { message })
-  }
-}
-
-export const emitStructurePreview = (position: { x: number; y: number }, structureType: string) => {
-  const socket = useGameStore.getState().socket
-  if (socket) {
-    socket.emit('preview-structure', { position, structureType })
   }
 }

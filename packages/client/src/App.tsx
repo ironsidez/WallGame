@@ -2,15 +2,20 @@ import { useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { GameLobby, GameBoard, Login } from './components'
 import { useAuthStore } from './stores/authStore'
+import { useGameStore } from './stores/gameStore'
 import './App.css'
 
 function App() {
   const { isAuthenticated, user, checkAuth, logout } = useAuthStore()
+  const { currentGameId } = useGameStore()
 
   // Check if user is already logged in on app start
   useEffect(() => {
     checkAuth()
   }, [checkAuth])
+
+  // Determine default redirect based on whether user was in a game
+  const defaultRedirect = currentGameId ? `/game/${currentGameId}` : '/lobby'
 
   return (
     <Router>
@@ -25,7 +30,7 @@ function App() {
             <>
               <Route path="/lobby" element={<GameLobby user={user} onLogout={logout} />} />
               <Route path="/game/:gameId" element={<GameBoard user={user} />} />
-              <Route path="*" element={<Navigate to="/lobby" />} />
+              <Route path="*" element={<Navigate to={defaultRedirect} />} />
             </>
           )}
         </Routes>

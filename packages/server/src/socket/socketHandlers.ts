@@ -53,33 +53,6 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         await socket.join(gameId);
         currentGameId = gameId;
         
-        // Get user info from database
-        const userInfo = await databaseManager.getUserById(currentUserId);
-        if (!userInfo) {
-          socket.emit('error', { message: 'User not found' });
-          return;
-        }
-        
-        // Create player object
-        const teamColors = ['#ff4444', '#44ff44', '#4444ff', '#ffff44', '#ff44ff', '#44ffff'];
-        const player = {
-          id: currentUserId,
-          username: userInfo.username,
-          teamId: uuidv4(), // Generate a new team ID for the player
-          color: teamColors[Math.floor(Math.random() * teamColors.length)],
-          isOnline: true,
-          resources: 100,
-          lastSeen: new Date()
-        };
-        
-        // Add player to game via GameManager
-        await gameManager.addPlayerToGame(gameId, player);
-        
-        // Add player to database for persistent tracking
-        await databaseManager.addPlayerToGame(gameId, currentUserId, player.teamId);
-        
-        console.log(`👤 Player ${currentUserId} joined game ${gameId}`);
-        
         // Initialize or get game state
         let gameState = await gameManager.getGameState(gameId);
         if (!gameState) {
@@ -88,8 +61,43 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
           gameState = await gameManager.getGameState(gameId);
         }
         
+        // Check if player already exists in the game
+        const existingPlayer = gameState?.players.get(currentUserId);
+        
+        if (existingPlayer) {
+          // Player already in game, just mark as online
+          await gameManager.setPlayerOnlineStatus(gameId, currentUserId, true);
+          console.log(`👤 Player ${currentUserId} reconnected to game ${gameId}`);
+        } else {
+          // Player not in game yet - they need to join via REST API first
+          console.log(`⚠️ Player ${currentUserId} tried to join game ${gameId} without being a participant`);
+          socket.emit('error', { 
+            message: 'You must join this game from the lobby first',
+            code: 'NOT_A_PARTICIPANT'
+          });
+          return;
+        }
+        
+        // Refresh game state after player update
+        gameState = await gameManager.getGameState(gameId);
+        
         if (gameState) {
-          socket.emit('game-state', gameState);
+          // Serialize Maps to objects for socket transmission
+          const serializedState = {
+            ...gameState,
+            players: Object.fromEntries(gameState.players || []),
+            cities: Object.fromEntries(gameState.cities || []),
+            buildings: Object.fromEntries(gameState.buildings || []),
+            units: Object.fromEntries(gameState.units || []),
+            grid: {
+              width: gameState.grid.width,
+              height: gameState.grid.height,
+              squares: Object.fromEntries(gameState.grid.squares || [])
+            }
+          };
+          
+          socket.emit('game-state', serializedState);
+          console.log(`📊 Sent game state with ${Object.keys(serializedState.grid.squares).length} grid squares`);
         }
         
         // Notify other players
@@ -98,6 +106,17 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         // Send updated player list
         const players = await gameManager.getGamePlayers(gameId);
         io.to(gameId).emit('players-update', players);
+        
+        // Broadcast lobby update to all connected clients
+        const games = await databaseManager.getActiveGames();
+        for (const game of games) {
+          const onlineCount = await gameManager.getOnlinePlayerCount(game.id);
+          const totalCount = await gameManager.getTotalPlayerCount(game.id);
+          game.online_players = onlineCount;
+          game.total_players = totalCount;
+          game.current_players = `${onlineCount}/${totalCount}`;
+        }
+        io.emit('lobby-update', games);
         
       } catch (error) {
         console.error('Error joining game:', error);
@@ -116,16 +135,32 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
       const { gameId, playerId } = data;
       
       try {
-        await socket.leave(gameId);
+        // Mark player as offline BEFORE leaving the room (so we can still broadcast)
+        await gameManager.setPlayerOnlineStatus(gameId, playerId, false);
         
-        // Remove player from game state and database
-        await gameManager.removePlayerFromGame(gameId, playerId);
-        await databaseManager.removePlayerFromGame(gameId, playerId);
+        console.log(`👋 Player ${playerId} left game ${gameId} (marked offline)`);
         
-        console.log(`👋 Player ${playerId} left game ${gameId}`);
-        
-        // Notify other players
+        // Notify other players in the game room
         socket.to(gameId).emit('player-left', { playerId });
+        
+        // Send updated player list to remaining players in the game
+        const players = await gameManager.getGamePlayers(gameId);
+        io.to(gameId).emit('players-update', players);
+        
+        // Now leave the socket room
+        await socket.leave(gameId);
+        currentGameId = null;
+        
+        // Broadcast lobby update to all connected clients
+        const games = await databaseManager.getActiveGames();
+        for (const game of games) {
+          const onlineCount = await gameManager.getOnlinePlayerCount(game.id);
+          const totalCount = await gameManager.getTotalPlayerCount(game.id);
+          game.online_players = onlineCount;
+          game.total_players = totalCount;
+          game.current_players = `${onlineCount}/${totalCount}`;
+        }
+        io.emit('lobby-update', games);
       } catch (error) {
         console.error('Error leaving game:', error);
       }
@@ -210,14 +245,28 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
     socket.on('disconnect', async () => {
       console.log(`🔌 Player disconnected: ${socket.id}`);
       
-      // If player was in a game, remove them
+      // If player was in a game, mark them as offline (don't remove them!)
       if (currentUserId && currentGameId) {
         try {
-          await gameManager.removePlayerFromGame(currentGameId, currentUserId);
-          await databaseManager.removePlayerFromGame(currentGameId, currentUserId);
-          console.log(`👋 Player ${currentUserId} automatically removed from game ${currentGameId} on disconnect`);
+          await gameManager.setPlayerOnlineStatus(currentGameId, currentUserId, false);
+          console.log(`👋 Player ${currentUserId} marked offline in game ${currentGameId}`);
+          
+          // Broadcast lobby update to all connected clients
+          const games = await databaseManager.getActiveGames();
+          for (const game of games) {
+            const onlineCount = await gameManager.getOnlinePlayerCount(game.id);
+            const totalCount = await gameManager.getTotalPlayerCount(game.id);
+            game.online_players = onlineCount;
+            game.total_players = totalCount;
+            game.current_players = `${onlineCount}/${totalCount}`;
+          }
+          io.emit('lobby-update', games);
+          
+          // Also update players in the game room
+          const players = await gameManager.getGamePlayers(currentGameId);
+          io.to(currentGameId).emit('players-update', players);
         } catch (error) {
-          console.error('Error removing player on disconnect:', error);
+          console.error('Error marking player offline on disconnect:', error);
         }
       }
       

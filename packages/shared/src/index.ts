@@ -1,4 +1,4 @@
-export * from './types';
-export * from './game-logic';
-export * from './structure-templates';
-export * from './validation';
+// Export RTS game types and logic
+export * from './types.js';
+export * from './game-logic.js';
+export * from './map-generator.js';

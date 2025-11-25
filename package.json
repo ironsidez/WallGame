@@ -12,7 +12,8 @@
     "dev:client": "npm run dev --workspace=@wallgame/client",
     "build": "npm run build --workspaces",
     "start": "npm run start --workspace=@wallgame/server",
-    "test": "npm run test --workspaces"
+    "test": "node tests/run-tests.js",
+    "generate-map": "npx tsx packages/server/src/scripts/generate-map.ts"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

@@ -55,7 +55,8 @@ router.post('/register', async (req: any, res: any) => {
       user: {
         id: user.id,
         username: user.username,
-        email: user.email
+        email: user.email,
+        isAdmin: user.is_admin || false
       },
       token
     });
@@ -65,9 +66,13 @@ router.post('/register', async (req: any, res: any) => {
       username: user.username,
       token: maskJwtToken(token)
     });
-  } catch (error) {
+  } catch (error: any) {
     secureLog('Registration error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    const errorMessage = error?.message || 'Internal server error';
+    res.status(500).json({ 
+      error: 'Registration failed', 
+      details: errorMessage 
+    });
   }
 });
 
@@ -80,15 +85,21 @@ router.post('/login', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Missing username or password' });
     }
 
+    console.log(`🔐 Login attempt for username: ${username}`);
+
     // Get user from database
     const user = await databaseManager.getUserByUsername(username);
     if (!user) {
+      console.log(`❌ Login failed: User "${username}" not found in database`);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
+
+    console.log(`✅ User found: ${user.username} (id: ${user.id})`);
 
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     if (!isPasswordValid) {
+      console.log(`❌ Login failed: Invalid password for user "${username}"`);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -108,7 +119,8 @@ router.post('/login', async (req: any, res: any) => {
       user: {
         id: user.id,
         username: user.username,
-        email: user.email
+        email: user.email,
+        isAdmin: user.is_admin || false
       },
       token
     });
@@ -147,6 +159,41 @@ export function authenticateToken(req: any, res: any, next: any) {
   });
 }
 
+// Admin authentication middleware
+export async function authenticateAdmin(req: any, res: any, next: any) {
+  // First authenticate the token
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Access token required' });
+  }
+
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    return res.status(500).json({ error: 'Server configuration error' });
+  }
+
+  try {
+    const decoded: any = jwt.verify(token, jwtSecret);
+    req.user = decoded;
+
+    // Check if user is admin
+    const user = await databaseManager.getUserById(decoded.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!user.is_admin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    next();
+  } catch (err) {
+    return res.status(403).json({ error: 'Invalid or expired token' });
+  }
+}
+
 // Get current user profile
 router.get('/profile', authenticateToken, async (req: any, res: any) => {
   try {
@@ -159,6 +206,7 @@ router.get('/profile', authenticateToken, async (req: any, res: any) => {
       id: user.id,
       username: user.username,
       email: user.email,
+      isAdmin: user.is_admin || false,
       createdAt: user.created_at
     });
   } catch (error) {

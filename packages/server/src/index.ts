@@ -43,26 +43,15 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Initialize managers
+// Initialize database managers (these don't connect yet, just create instances)
 const databaseManager = new DatabaseManager();
 const redisManager = new RedisManager();
-const gameManager = new GameManager(redisManager, databaseManager);
 
-// Inject database manager into auth routes
+// Import route setup functions
 import { setDatabaseManager } from './routes/auth';
-setDatabaseManager(databaseManager);
+import { setDatabaseManager as setGameDatabaseManager, setGameManager, setSocketIO } from './routes/game';
 
-// Inject database manager into game routes
-import { setDatabaseManager as setGameDatabaseManager, setGameManager } from './routes/game';
-setGameDatabaseManager(databaseManager);
-setGameManager(gameManager);
-
-// Routes (after database manager is set up)
-app.use('/api/auth', authRouter);
-app.use('/api/game', gameRouter);
-
-// Setup Socket.io handlers
-setupSocketHandlers(io, gameManager, databaseManager);
+// Note: GameManager will be initialized AFTER database connects (see startServer)
 
 // Start server
 async function startServer() {
@@ -76,6 +65,24 @@ async function startServer() {
       console.log('⚠️  Running in development mode without databases');
       console.log('💡 Set FORCE_DB=true to enable database connections');
     }
+    
+    // Initialize GameManager after database is connected
+    const gameManager = new GameManager(redisManager, databaseManager);
+    await gameManager.initialize();
+    console.log('🎮 GameManager initialized');
+    
+    // Set up route dependencies
+    setDatabaseManager(databaseManager);
+    setGameDatabaseManager(databaseManager);
+    setGameManager(gameManager);
+    setSocketIO(io);
+    
+    // Routes (after all managers are ready)
+    app.use('/api/auth', authRouter);
+    app.use('/api/game', gameRouter);
+    
+    // Setup Socket.io handlers
+    setupSocketHandlers(io, gameManager, databaseManager);
     
     server.listen(PORT, () => {
       // WallGame backend server restarting

@@ -1,14 +1,18 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
+import { io, Socket } from 'socket.io-client'
 
 interface GameRoom {
   id: string
   name: string
-  playerCount: number
+  current_players: string // Format: "1/3" (online/total)
+  online_players: number
+  total_players: number
   maxPlayers: number
   status: 'waiting' | 'playing' | 'finished'
   createdAt: string
+  isParticipating?: boolean
 }
 
 interface GameLobbyProps {
@@ -23,9 +27,28 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [newGameName, setNewGameName] = useState('')
+  const [socket, setSocket] = useState<Socket | null>(null)
 
   useEffect(() => {
     loadGames()
+    
+    // Connect to socket for real-time lobby updates
+    const newSocket = io('http://localhost:3001', {
+      auth: { token }
+    })
+    
+    setSocket(newSocket)
+    
+    // Listen for lobby updates - trigger a reload to get user-specific isParticipating flag
+    newSocket.on('lobby-update', () => {
+      console.log('📡 Received lobby update notification, reloading games...')
+      loadGames()
+    })
+    
+    // Cleanup on unmount
+    return () => {
+      newSocket.close()
+    }
   }, [])
 
   const loadGames = async () => {
@@ -65,7 +88,9 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
       if (response.ok) {
         const result = await response.json()
         setNewGameName('')
-        navigate(`/game/${result.game.id}`)
+        // Reload the game list to show the new game
+        await loadGames()
+        alert(`Game "${result.game.name}" created successfully!`)
       } else {
         const error = await response.json()
         alert(error.message || 'Failed to create game')
@@ -78,8 +103,15 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
     }
   }
 
-  const joinGame = async (gameId: string) => {
+  const joinGame = async (gameId: string, isParticipating: boolean = false) => {
     try {
+      // If already participating, just navigate to the game
+      if (isParticipating) {
+        navigate(`/game/${gameId}`)
+        return
+      }
+
+      // Otherwise, join via API first
       const response = await fetch(`http://localhost:3001/api/game/${gameId}/join`, {
         method: 'POST',
         headers: {
@@ -88,14 +120,43 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
       })
 
       if (response.ok) {
+        // Refresh game list to show updated player count before navigating
+        await loadGames()
         navigate(`/game/${gameId}`)
       } else {
         const error = await response.json()
-        alert(error.message || 'Failed to join game')
+        alert(error.error || 'Failed to join game')
       }
     } catch (error) {
       console.error('Failed to join game:', error)
       alert('Failed to join game')
+    }
+  }
+
+  const deleteGame = async (gameId: string, gameName: string) => {
+    if (!confirm(`Are you sure you want to delete "${gameName}"?`)) {
+      return
+    }
+
+    try {
+      const response = await fetch(`http://localhost:3001/api/game/${gameId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (response.ok) {
+        // Refresh the game list
+        await loadGames()
+        alert('Game deleted successfully')
+      } else {
+        const error = await response.json()
+        alert(error.error || 'Failed to delete game')
+      }
+    } catch (error) {
+      console.error('Failed to delete game:', error)
+      alert('Failed to delete game')
     }
   }
 
@@ -127,27 +188,29 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
       </div>
 
       <div className="lobby-content">
-        <div className="create-game-section">
-          <h2>Create New Game</h2>
-          <form onSubmit={createGame} className="create-game-form">
-            <input
-              type="text"
-              value={newGameName}
-              onChange={(e) => setNewGameName(e.target.value)}
-              placeholder="Enter game name..."
-              maxLength={50}
-              disabled={creating}
-              required
-            />
-            <button 
-              type="submit" 
-              className="btn-primary"
-              disabled={creating || !newGameName.trim()}
-            >
-              {creating ? 'Creating...' : 'Create Game'}
-            </button>
-          </form>
-        </div>
+        {user?.isAdmin && (
+          <div className="create-game-section">
+            <h2>Create New Game (Admin)</h2>
+            <form onSubmit={createGame} className="create-game-form">
+              <input
+                type="text"
+                value={newGameName}
+                onChange={(e) => setNewGameName(e.target.value)}
+                placeholder="Enter game name..."
+                maxLength={50}
+                disabled={creating}
+                required
+              />
+              <button 
+                type="submit" 
+                className="btn-primary"
+                disabled={creating || !newGameName.trim()}
+              >
+                {creating ? 'Creating...' : 'Create Game'}
+              </button>
+            </form>
+          </div>
+        )}
 
         <div className="games-section">
           <h2>Active Games ({games.length})</h2>
@@ -165,7 +228,7 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
                     <h3>{game.name}</h3>
                     <div className="game-stats">
                       <span className="player-count">
-                        👥 {game.playerCount}/{game.maxPlayers} players
+                        👥 {game.current_players} players
                       </span>
                       <span className={`game-status status-${game.status}`}>
                         {game.status}
@@ -177,13 +240,27 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
                   </div>
                   <div className="game-actions">
                     <button
-                      onClick={() => joinGame(game.id)}
+                      onClick={() => joinGame(game.id, game.isParticipating)}
                       className="btn-primary"
-                      disabled={game.status !== 'waiting' && game.status !== 'playing'}
+                      disabled={game.status === 'finished'}
                     >
-                      {game.status === 'waiting' ? 'Join Game' : 
-                       game.status === 'playing' ? 'Spectate' : 'Finished'}
+                      {game.isParticipating 
+                        ? 'Open Game' 
+                        : game.status === 'waiting' 
+                          ? 'Join Game' 
+                          : game.status === 'playing' 
+                            ? 'Spectate' 
+                            : 'Finished'}
                     </button>
+                    {user?.isAdmin && (
+                      <button
+                        onClick={() => deleteGame(game.id, game.name)}
+                        className="btn-danger"
+                        style={{ marginLeft: '10px' }}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -194,10 +271,10 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
         <div className="lobby-info">
           <h3>🎮 How to Play</h3>
           <ul>
-            <li>🏗️ <strong>Build Structures:</strong> Place Tetris-like pieces on the grid</li>
-            <li>⚔️ <strong>Capture Territory:</strong> Adjacent structures battle based on combined values</li>
-            <li>📈 <strong>Grow Your Empire:</strong> Capture enemy structures to expand</li>
-            <li>🏰 <strong>Strategic Placement:</strong> Use amplifiers and fortresses wisely</li>
+            <li>� <strong>Build Cities:</strong> Convert Settlers into 3×3 city structures</li>
+            <li>🏗️ <strong>Construct Buildings:</strong> Resource production and unit training</li>
+            <li>⚔️ <strong>Train Units:</strong> Raise armies to defend and conquer</li>
+            <li>📈 <strong>Manage Resources:</strong> Food and materials for growth</li>
             <li>🌍 <strong>Massive Scale:</strong> Play with hundreds of other players simultaneously</li>
           </ul>
         </div>

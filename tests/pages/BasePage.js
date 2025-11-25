@@ -150,7 +150,10 @@ class BasePage {
     }
     
     if (maskedInfo.inputs.length > 0) {
-      console.log('Inputs:', maskedInfo.inputs.map(input => `${input.name || input.type}: "${input.placeholder || input.value}"`));
+      console.log('Inputs:', maskedInfo.inputs.map(input => {
+        const displayValue = input.value ? '[FILLED]' : `"${input.placeholder || 'empty'}"`;
+        return `${input.name || input.type}: ${displayValue}`;
+      }));
     }
     
     console.log('Auth state:', {
@@ -189,7 +192,7 @@ class BasePage {
       const postActionInfo = await this.getAndLogFullPageInfo(`POST-${stepName}`);
       
       // Take post-action screenshot
-      await this.takeScreenshot(`${stepName}-after`);
+      await this.takeScreenshot(`${stepName}`);
       
       console.log(`✅ Action completed successfully: ${stepName}`);
       

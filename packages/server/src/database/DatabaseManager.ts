@@ -83,6 +83,7 @@ export class DatabaseManager {
         username VARCHAR(20) UNIQUE NOT NULL,
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
+        is_admin BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )`,
@@ -163,7 +164,7 @@ export class DatabaseManager {
     const query = `
       INSERT INTO users (username, email, password_hash)
       VALUES ($1, $2, $3)
-      RETURNING id, username, email, created_at
+      RETURNING id, username, email, is_admin, created_at
     `;
     
     const result = await this.pool.query(query, [username, email, passwordHash]);
@@ -182,7 +183,7 @@ export class DatabaseManager {
   async getUserById(userId: string): Promise<any | null> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
-    const query = 'SELECT id, username, email, created_at FROM users WHERE id = $1';
+    const query = 'SELECT id, username, email, is_admin, created_at FROM users WHERE id = $1';
     const result = await this.pool.query(query, [userId]);
     
     return result.rows[0] || null;
@@ -209,6 +210,32 @@ export class DatabaseManager {
     await this.pool.query(query, [status, gameId]);
   }
 
+  async deleteGame(gameId: string): Promise<void> {
+    if (!this.pool) throw new Error('Database pool not initialized');
+
+    // Delete all associated data in a transaction
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      // Delete game participants
+      await client.query('DELETE FROM game_participants WHERE game_id = $1', [gameId]);
+      
+      // Delete game history
+      await client.query('DELETE FROM game_history WHERE game_id = $1', [gameId]);
+      
+      // Delete the game itself
+      await client.query('DELETE FROM games WHERE id = $1', [gameId]);
+      
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async addPlayerToGame(gameId: string, userId: string, teamId: string): Promise<void> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
@@ -231,6 +258,26 @@ export class DatabaseManager {
     `;
     
     await this.pool.query(query, [gameId, userId]);
+  }
+
+  async getGamePlayers(gameId: string): Promise<any[]> {
+    if (!this.pool) throw new Error('Database pool not initialized');
+
+    const query = `
+      SELECT 
+        u.id,
+        u.username,
+        gp.team_id,
+        gp.joined_at,
+        gp.left_at
+      FROM game_participants gp
+      JOIN users u ON gp.user_id = u.id
+      WHERE gp.game_id = $1 AND gp.left_at IS NULL
+      ORDER BY gp.joined_at ASC
+    `;
+    
+    const result = await this.pool.query(query, [gameId]);
+    return result.rows;
   }
 
   async getActiveGames(): Promise<any[]> {

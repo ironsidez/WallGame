@@ -51,6 +51,10 @@ coverage/
 # nyc test coverage
 .nyc_output
 
+# Test results (Playwright)
+tests/test-results/
+tests/.test-run-timestamp
+
 # Dependency directories
 jspm_packages/
 

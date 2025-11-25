@@ -4,12 +4,19 @@ export function PlayerDashboard() {
   const { user } = useAuthStore()
   const { currentGame, players } = useGameStore()
 
-  // Mock player stats - in a real game these would come from the game state
+  // Extract player stats from game state
   const playerStats = {
-    resources: 100,
-    structures: 15,
-    territory: 25,
-    score: 340
+    cities: 0,
+    units: 0,
+    population: 0,
+    food: 0,
+    materials: 0
+  }
+
+  // TODO: Calculate from actual game state when available
+  if (currentGame && user) {
+    // playerStats.cities = Object.values(currentGame.cities || {}).filter((c: any) => c.playerId === user.id).length
+    // playerStats.units = Object.values(currentGame.units || {}).filter((u: any) => u.playerId === user.id).length
   }
 
   return (
@@ -20,23 +27,33 @@ export function PlayerDashboard() {
       </div>
 
       <div className="player-stats">
-        <h4>📊 Statistics</h4>
+        <h4>📊 Resources</h4>
         <div className="stat-grid">
           <div className="stat-item">
-            <div className="stat-label">💰 Resources</div>
-            <div className="stat-value">{playerStats.resources}</div>
+            <div className="stat-label">🌾 Food</div>
+            <div className="stat-value">{playerStats.food}</div>
           </div>
           <div className="stat-item">
-            <div className="stat-label">🏗️ Structures</div>
-            <div className="stat-value">{playerStats.structures}</div>
+            <div className="stat-label">🪵 Materials</div>
+            <div className="stat-value">{playerStats.materials}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="player-stats">
+        <h4>🏛️ Empire</h4>
+        <div className="stat-grid">
+          <div className="stat-item">
+            <div className="stat-label">� Cities</div>
+            <div className="stat-value">{playerStats.cities}</div>
           </div>
           <div className="stat-item">
-            <div className="stat-label">🗺️ Territory</div>
-            <div className="stat-value">{playerStats.territory}</div>
+            <div className="stat-label">⚔️ Units</div>
+            <div className="stat-value">{playerStats.units}</div>
           </div>
           <div className="stat-item">
-            <div className="stat-label">🏆 Score</div>
-            <div className="stat-value">{playerStats.score}</div>
+            <div className="stat-label">👥 Population</div>
+            <div className="stat-value">{playerStats.population}</div>
           </div>
         </div>
       </div>
@@ -54,7 +71,7 @@ export function PlayerDashboard() {
                   {player.id === user?.id && ' (You)'}
                 </div>
                 <div className="player-score">
-                  🏆 {player.resources || 0}
+                  � {0} {/* TODO: Calculate city count */}
                 </div>
               </div>
             ))
@@ -72,24 +89,22 @@ export function PlayerDashboard() {
             </span>
           </div>
           <div className="info-item">
-            <span className="info-label">Players:</span>
-            <span className="info-value">
-              {currentGame?.players ? currentGame.players.size : 0}
-            </span>
+            <span className="info-label">Map Size:</span>
+            <span className="info-value">50×50</span>
           </div>
         </div>
       </div>
 
       <div className="quick-actions">
         <h4>⚡ Quick Actions</h4>
-        <button className="action-btn" title="Center view on your territory">
-          🎯 Center View
+        <button className="action-btn" title="Center view on your cities">
+          � My Cities
         </button>
-        <button className="action-btn" title="Show game statistics">
-          📈 Stats
+        <button className="action-btn" title="View all units">
+          ⚔️ My Units
         </button>
-        <button className="action-btn" title="View game rules">
-          📖 Rules
+        <button className="action-btn" title="View game statistics">
+          � Stats
         </button>
       </div>
     </div>

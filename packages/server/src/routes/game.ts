@@ -1,13 +1,15 @@
 import express from 'express';
 import { DatabaseManager } from '../database/DatabaseManager';
 import { GameManager } from '../game/GameManager';
-import { authenticateToken } from './auth';
+import { authenticateToken, authenticateAdmin } from './auth';
+import { Server as SocketServer } from 'socket.io';
 
 const router = express.Router();
 
 // This will be injected by the main server
 let databaseManager: DatabaseManager;
 let gameManager: GameManager;
+let io: SocketServer;
 
 export function setDatabaseManager(dm: DatabaseManager) {
   databaseManager = dm;
@@ -17,8 +19,12 @@ export function setGameManager(gm: GameManager) {
   gameManager = gm;
 }
 
-// Create new game
-router.post('/create', authenticateToken, async (req: any, res: any) => {
+export function setSocketIO(socketIO: SocketServer) {
+  io = socketIO;
+}
+
+// Create new game (admin only)
+router.post('/create', authenticateAdmin, async (req: any, res: any) => {
   try {
     const { name, settings } = req.body;
 
@@ -26,20 +32,42 @@ router.post('/create', authenticateToken, async (req: any, res: any) => {
       return res.status(400).json({ error: 'Game name is required' });
     }
 
-    const gameState = await databaseManager.createGame(name, {
+    // Create game in database
+    const dbGame = await databaseManager.createGame(name, {
       name,
+      maxPlayers: settings?.maxPlayers || 100,
+      mapWidth: settings?.mapWidth || 50,
+      mapHeight: settings?.mapHeight || 50,
       ...settings
     });
+
+    // Initialize in GameManager (it will load from database or create new)
+    if (gameManager) {
+      await gameManager.initializeGame(dbGame.id);
+    }
+
+    // Broadcast lobby update to all connected clients
+    if (io && gameManager) {
+      const games = await databaseManager.getActiveGames();
+      for (const game of games) {
+        const onlineCount = await gameManager.getOnlinePlayerCount(game.id);
+        const totalCount = await gameManager.getTotalPlayerCount(game.id);
+        game.online_players = onlineCount;
+        game.total_players = totalCount;
+        game.current_players = `${onlineCount}/${totalCount}`;
+      }
+      io.emit('lobby-update', games);
+    }
 
     res.status(201).json({
       message: 'Game created successfully',
       game: {
-        id: gameState.id,
-        name: gameState.name,
-        playerCount: 1,
-        maxPlayers: gameState.max_players || 10,
-        status: gameState.status,
-        createdAt: gameState.created_at
+        id: dbGame.id,
+        name: dbGame.name,
+        playerCount: 0,
+        maxPlayers: dbGame.max_players || 100,
+        status: dbGame.status,
+        createdAt: dbGame.created_at
       }
     });
   } catch (error) {
@@ -49,15 +77,28 @@ router.post('/create', authenticateToken, async (req: any, res: any) => {
 });
 
 // Get active games
-router.get('/active', async (req: any, res: any) => {
+router.get('/active', authenticateToken, async (req: any, res: any) => {
   try {
     const games = await databaseManager.getActiveGames();
+    const userId = req.user.userId;
     
-    // If gameManager is available, get real-time player counts
+    // If gameManager is available, get real-time player counts and participation status
     if (gameManager) {
       for (const game of games) {
+        const onlineCount = await gameManager.getOnlinePlayerCount(game.id);
+        const totalCount = await gameManager.getTotalPlayerCount(game.id);
+        
+        console.log(`📊 Game "${game.name}" (${game.id}): online=${onlineCount}, total=${totalCount}`);
+        
+        // Set both online and total counts
+        game.online_players = onlineCount;
+        game.total_players = totalCount;
+        game.current_players = `${onlineCount}/${totalCount}`; // Format: "1/3"
+        
+        // Check if current user is in this game
         const players = await gameManager.getGamePlayers(game.id);
-        game.current_players = players.length.toString();
+        console.log(`👥 Game "${game.name}" players:`, players.map((p: any) => `${p.username} (online: ${p.isOnline})`));
+        game.isParticipating = players.some((p: any) => p.id === userId);
       }
     }
     
@@ -65,6 +106,42 @@ router.get('/active', async (req: any, res: any) => {
   } catch (error) {
     console.error('Get active games error:', error);
     res.status(500).json({ error: 'Failed to get active games' });
+  }
+});
+
+// Delete game (admin only)
+router.delete('/:gameId', authenticateAdmin, async (req: any, res: any) => {
+  try {
+    const { gameId } = req.params;
+
+    // Remove from GameManager if active
+    if (gameManager) {
+      await gameManager.deleteGame(gameId);
+    }
+
+    // Delete from database
+    await databaseManager.deleteGame(gameId);
+
+    // Broadcast lobby update to all connected clients
+    if (io && gameManager) {
+      const games = await databaseManager.getActiveGames();
+      for (const game of games) {
+        const onlineCount = await gameManager.getOnlinePlayerCount(game.id);
+        const totalCount = await gameManager.getTotalPlayerCount(game.id);
+        game.online_players = onlineCount;
+        game.total_players = totalCount;
+        game.current_players = `${onlineCount}/${totalCount}`;
+      }
+      io.emit('lobby-update', games);
+    }
+
+    res.json({
+      message: 'Game deleted successfully',
+      gameId
+    });
+  } catch (error) {
+    console.error('Delete game error:', error);
+    res.status(500).json({ error: 'Failed to delete game' });
   }
 });
 
@@ -110,24 +187,48 @@ router.post('/:gameId/join', authenticateToken, async (req: any, res: any) => {
     const { gameId } = req.params;
     const { teamId, color } = req.body;
 
+    if (!gameManager) {
+      return res.status(500).json({ error: 'Game manager not available' });
+    }
+
     const player = {
       id: req.user.userId,
       username: req.user.username,
-      teamId: teamId || req.user.userId, // Default to individual team
       color: color || '#' + Math.floor(Math.random()*16777215).toString(16),
-      resources: 100, // Starting resources
       isOnline: true,
-      lastSeen: new Date()
+      lastSeen: new Date(),
+      cityIds: [],
+      unitIds: []
     };
 
-    await databaseManager.addPlayerToGame(gameId, req.user.userId, player.teamId);
+    // Add player to database (persistent storage)
+    await databaseManager.addPlayerToGame(gameId, req.user.userId, teamId || req.user.userId);
+    
+    // CRITICAL: Add player to GameManager (in-memory state)
+    const added = await gameManager.addPlayerToGame(gameId, player);
+    
+    if (!added) {
+      return res.status(400).json({ error: 'Failed to add player to game (game full or not found)' });
+    }
+
+    // Broadcast lobby update to all connected clients
+    if (io) {
+      const games = await databaseManager.getActiveGames();
+      for (const game of games) {
+        const onlineCount = await gameManager.getOnlinePlayerCount(game.id);
+        const totalCount = await gameManager.getTotalPlayerCount(game.id);
+        game.online_players = onlineCount;
+        game.total_players = totalCount;
+        game.current_players = `${onlineCount}/${totalCount}`;
+      }
+      io.emit('lobby-update', games);
+    }
 
     res.json({
       message: 'Successfully joined game',
       player: {
         id: player.id,
         username: player.username,
-        teamId: player.teamId,
         color: player.color
       }
     });

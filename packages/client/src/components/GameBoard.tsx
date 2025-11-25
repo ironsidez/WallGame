@@ -2,38 +2,38 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
 import { useGameStore } from '../stores'
 import { useAuthStore } from '../stores/authStore'
-import { StructurePalette } from './StructurePalette'
 import { ChatPanel } from './ChatPanel'
 import { PlayerDashboard } from './PlayerDashboard'
-import { ActionType } from '@wallgame/shared'
 
 interface GameBoardProps {
   user: any
 }
 
 const CELL_SIZE = 40
-const GRID_WIDTH = 25
-const GRID_HEIGHT = 20
 
 export function GameBoard({ user }: GameBoardProps) {
   const { gameId } = useParams<{ gameId: string }>()
   const navigate = useNavigate()
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [previewPosition, setPreviewPosition] = useState<{x: number, y: number} | null>(null)
+  const [hoveredCell, setHoveredCell] = useState<{x: number, y: number} | null>(null)
   
   const {
     connectSocket,
     disconnectSocket,
     joinGame,
     leaveGame,
-    placeStructure,
-    selectedStructure,
+    selectedUnit,
+    selectedCity,
     currentGame,
     players,
     connected
   } = useGameStore()
 
   const { isAuthenticated, token } = useAuthStore()
+
+  // Get grid dimensions from game state
+  const GRID_WIDTH = currentGame?.grid?.width || 50
+  const GRID_HEIGHT = currentGame?.grid?.height || 30
 
   // Initialize socket connection and join game
   useEffect(() => {
@@ -90,66 +90,111 @@ export function GameBoard({ user }: GameBoardProps) {
       ctx.stroke()
     }
 
-    // Draw structures (placeholder - will be populated from game state)
-    if (currentGame?.structures) {
-      Object.values(currentGame.structures).forEach((structure: any) => {
-        ctx.fillStyle = getTeamColor(structure.teamId)
-        structure.positions?.forEach((pos: any) => {
-          ctx.fillRect(
-            pos.x * CELL_SIZE + 2,
-            pos.y * CELL_SIZE + 2,
-            CELL_SIZE - 4,
-            CELL_SIZE - 4
-          )
-        })
+    // Draw terrain (placeholder - will be populated from game state)
+    if (currentGame?.grid?.squares) {
+      Object.entries(currentGame.grid.squares).forEach(([key, square]: [string, any]) => {
+        const terrain = square.terrain
+        ctx.fillStyle = getTerrainColor(terrain)
+        const [x, y] = key.split(',').map(Number)
+        ctx.fillRect(
+          x * CELL_SIZE,
+          y * CELL_SIZE,
+          CELL_SIZE,
+          CELL_SIZE
+        )
       })
     }
 
-    // Draw preview structure
-    if (previewPosition && selectedStructure) {
-      ctx.fillStyle = 'rgba(0, 150, 255, 0.5)'
-      ctx.fillRect(
-        previewPosition.x * CELL_SIZE + 2,
-        previewPosition.y * CELL_SIZE + 2,
-        CELL_SIZE - 4,
-        CELL_SIZE - 4
-      )
+    // Draw cities (placeholder - will be populated from game state)
+    if (currentGame?.cities) {
+      Object.values(currentGame.cities).forEach((city: any) => {
+        ctx.fillStyle = getPlayerColor(city.playerId)
+        ctx.fillRect(
+          city.x * CELL_SIZE + 2,
+          city.y * CELL_SIZE + 2,
+          CELL_SIZE * 3 - 4,
+          CELL_SIZE * 3 - 4
+        )
+        // Draw city icon
+        ctx.fillStyle = '#fff'
+        ctx.font = `${CELL_SIZE}px Arial`
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText('🏰', (city.x + 1.5) * CELL_SIZE, (city.y + 1.5) * CELL_SIZE)
+      })
     }
-  }, [currentGame, previewPosition, selectedStructure])
 
-  const getTeamColor = (teamId: string): string => {
+    // Draw units (placeholder - will be populated from game state)
+    if (currentGame?.units) {
+      Object.values(currentGame.units).forEach((unit: any) => {
+        ctx.fillStyle = getPlayerColor(unit.playerId)
+        ctx.beginPath()
+        ctx.arc(
+          unit.x * CELL_SIZE + CELL_SIZE / 2,
+          unit.y * CELL_SIZE + CELL_SIZE / 2,
+          CELL_SIZE / 3,
+          0,
+          2 * Math.PI
+        )
+        ctx.fill()
+        // Draw unit icon
+        ctx.fillStyle = '#fff'
+        ctx.font = `${CELL_SIZE / 2}px Arial`
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(getUnitIcon(unit.type), unit.x * CELL_SIZE + CELL_SIZE / 2, unit.y * CELL_SIZE + CELL_SIZE / 2)
+      })
+    }
+  }, [currentGame, GRID_WIDTH, GRID_HEIGHT])
+
+  const getTerrainColor = (terrain: string): string => {
+    const colors: Record<string, string> = {
+      'plains': '#90EE90',
+      'forest': '#228B22',
+      'mountain': '#808080',
+      'water': '#4169E1',
+      'desert': '#F4A460',
+      'tundra': '#E0FFFF',
+      'swamp': '#556B2F',
+      'hills': '#8B7355'
+    }
+    return colors[terrain] || '#f0f0f0'
+  }
+
+  const getPlayerColor = (playerId: string): string => {
     const colors = ['#ff4444', '#44ff44', '#4444ff', '#ffff44', '#ff44ff', '#44ffff']
-    const hash = teamId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
+    const hash = playerId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
     return colors[hash % colors.length]
   }
 
+  const getUnitIcon = (unitType: string): string => {
+    const icons: Record<string, string> = {
+      'settler': '👥',
+      'infantry': '⚔️',
+      'cavalry': '🐴',
+      'archer': '🏹',
+      'siege': '🎯'
+    }
+    return icons[unitType] || '▪'
+  }
+
   const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!selectedStructure || !canvasRef.current || !user) return
+    if (!canvasRef.current || !user) return
 
     const canvas = canvasRef.current
     const rect = canvas.getBoundingClientRect()
     const x = Math.floor((event.clientX - rect.left) / CELL_SIZE)
     const y = Math.floor((event.clientY - rect.top) / CELL_SIZE)
 
-    // Validate placement bounds
+    // Validate click bounds
     if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) return
 
-    const action = {
-      type: ActionType.PLACE_STRUCTURE,
-      playerId: user.id,
-      timestamp: new Date(),
-      data: {
-        structureType: selectedStructure,
-        positions: [{ x, y }],
-        rotation: 0
-      }
-    }
-
-    placeStructure(action)
+    // TODO: Handle unit selection, movement commands, city selection
+    console.log(`Clicked on grid square: (${x}, ${y})`)
   }
 
   const handleCanvasMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!selectedStructure || !canvasRef.current) return
+    if (!canvasRef.current) return
 
     const canvas = canvasRef.current
     const rect = canvas.getBoundingClientRect()
@@ -158,12 +203,12 @@ export function GameBoard({ user }: GameBoardProps) {
 
     // Only update if position is valid
     if (x >= 0 && x < GRID_WIDTH && y >= 0 && y < GRID_HEIGHT) {
-      setPreviewPosition({ x, y })
+      setHoveredCell({ x, y })
     }
   }
 
   const handleCanvasMouseLeave = () => {
-    setPreviewPosition(null)
+    setHoveredCell(null)
   }
 
   const handleLeaveGame = () => {
@@ -171,25 +216,31 @@ export function GameBoard({ user }: GameBoardProps) {
     navigate('/lobby')
   }
 
+  // Calculate player counts
+  const onlinePlayerCount = players.filter(p => p.isOnline).length
+  const totalPlayerCount = players.length
+  const gameName = currentGame?.name || 'Loading...'
+
   return (
     <div className="game-board-container">
       <div className="game-header">
-        <h1>🎮 Game: {gameId}</h1>
+        <h1 data-testid="game-title">🎮 Game: <span data-testid="game-name">{gameName}</span></h1>
         <div className="game-info">
-          <span>Player: {user?.username}</span>
+          <span data-testid="player-username">Player: {user?.username}</span>
           <span className={`connection-status ${connected ? 'connected' : 'disconnected'}`}>
             {connected ? '🟢 Connected' : '🔴 Disconnected'}
           </span>
-          <span>Players: {players.length}</span>
+          <span data-testid="game-player-count">
+            Players: <span data-testid="online-count">{onlinePlayerCount}</span>/<span data-testid="total-count">{totalPlayerCount}</span>
+          </span>
         </div>
-        <button onClick={handleLeaveGame} className="btn-secondary">
+        <button onClick={handleLeaveGame} className="btn-secondary" data-testid="leave-game-button">
           Back to Lobby
         </button>
       </div>
 
       <div className="game-layout">
         <div className="game-sidebar-left">
-          <StructurePalette />
           <PlayerDashboard />
         </div>
 

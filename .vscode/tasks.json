@@ -63,10 +63,26 @@
         {
             "label": "Run All Tests",
             "type": "shell",
-            "command": "npx",
-            "args": ["playwright", "test", "--headed"],
+            "command": "npm",
+            "args": ["run", "test"],
             "group": "test",
             "problemMatcher": []
+        },
+        {
+            "label": "Stop Dev Server",
+            "type": "shell",
+            "command": "taskkill",
+            "args": ["/F", "/IM", "node.exe"],
+            "windows": {
+                "command": "taskkill",
+                "args": ["/F", "/IM", "node.exe"]
+            },
+            "group": "build",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
         }
     ]
 }
