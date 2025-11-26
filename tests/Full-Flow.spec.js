@@ -65,9 +65,14 @@ test('WallGame Complete Multi-User Flow', async ({ page }, testInfo) => {
     await lobbyPage.verifyOnLobby(`Step-${stepNum}-admin-on-lobby`);
     stepNum++;
 
-    // Step 6: Fill create game form
+    // Step 6: Fill create game form with settings
     console.log(`\n🎯 Step ${stepNum}: Fill Create Game Form`);
-    await lobbyPage.fillCreateGame(gameName, `Step-${stepNum}-fill-create-game`);
+    const gameSettings = {
+      mapWidth: 100,
+      mapHeight: 100,
+      maxPlayers: 50
+    };
+    await lobbyPage.fillCreateGame(gameName, gameSettings, `Step-${stepNum}-fill-create-game`);
     stepNum++;
 
     // Step 7: Submit create game (stays on lobby)

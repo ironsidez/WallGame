@@ -10,7 +10,9 @@ import {
   TerrainType,
   UnitType,
   parseMapFile,
-  createTestMap
+  createTestMap,
+  generateRandomMap,
+  MapData
 } from '@wallgame/shared';
 import { RedisManager } from '../database/RedisManager';
 import { DatabaseManager } from '../database/DatabaseManager';
@@ -63,8 +65,8 @@ export class GameManager {
             buildings: new Map(),
             units: new Map(),
             grid: {
-              width: settings.mapWidth || 50,
-              height: settings.mapHeight || 50,
+              width: settings.mapWidth || 200,
+              height: settings.mapHeight || 200,
               squares: new Map()
             },
             gamePhase: dbGame.status === 'waiting' ? GamePhase.WAITING : GamePhase.ACTIVE,
@@ -74,8 +76,8 @@ export class GameManager {
             lastUpdate: new Date(dbGame.updated_at || dbGame.created_at),
             settings: {
               maxPlayers: settings.maxPlayers || 100,
-              mapWidth: settings.mapWidth || 50,
-              mapHeight: settings.mapHeight || 50,
+              mapWidth: settings.mapWidth || 200,
+              mapHeight: settings.mapHeight || 200,
               tickLengthMs: settings.tickLengthMs || 1000,
               ticksPerPopulationUpdate: settings.ticksPerPopulationUpdate || 10,
               cityBuildZoneRadius: settings.cityBuildZoneRadius || 10,
@@ -84,8 +86,12 @@ export class GameManager {
             }
           };
           
-          // Load map terrain (CRITICAL: Initialize grid squares with terrain)
-          const mapData = await this.loadMap(settings.mapFile || dbGame.map_file);
+          // Load map terrain (generate procedural if no file specified)
+          const mapData = await this.loadMap(
+            settings.mapFile || dbGame.map_file,
+            settings.mapWidth || 200,
+            settings.mapHeight || 200
+          );
           if (mapData) {
             this.initializeGridFromMap(gameState, mapData);
           } else {
@@ -132,8 +138,8 @@ export class GameManager {
     
     const defaultSettings: GameSettings = {
       maxPlayers: settings.maxPlayers || 100,
-      mapWidth: settings.mapWidth || 50,
-      mapHeight: settings.mapHeight || 50,
+      mapWidth: settings.mapWidth || 200,
+      mapHeight: settings.mapHeight || 200,
       tickLengthMs: settings.tickLengthMs || 1000,
       ticksPerPopulationUpdate: settings.ticksPerPopulationUpdate || 10,
       cityBuildZoneRadius: settings.cityBuildZoneRadius || 10,
@@ -141,10 +147,14 @@ export class GameManager {
       minPlayerDistance: settings.minPlayerDistance || 10
     };
 
-    // Load map (terrain generation)
-    const mapData = await this.loadMap(settings.mapFile);
+    // Generate procedural map with specified dimensions
+    const mapData = await this.loadMap(
+      settings.mapFile, 
+      defaultSettings.mapWidth, 
+      defaultSettings.mapHeight
+    );
     
-    // Use map dimensions if loaded
+    // Use map dimensions if loaded (might differ from settings if loaded from file)
     if (mapData) {
       defaultSettings.mapWidth = mapData.dimensions.width;
       defaultSettings.mapHeight = mapData.dimensions.height;
@@ -185,26 +195,37 @@ export class GameManager {
   }
 
   /**
-   * Load a map file or generate default
+   * Load a map file or generate a procedural map
+   * @param mapFile - Optional map file to load
+   * @param width - Width for procedural generation (default 200)
+   * @param height - Height for procedural generation (default 200)
    */
-  private async loadMap(mapFile?: string): Promise<ReturnType<typeof parseMapFile> | null> {
+  private async loadMap(mapFile?: string, width: number = 200, height: number = 200): Promise<MapData | null> {
     try {
       if (mapFile) {
         // Load from specific file
         const mapPath = path.join(__dirname, '../../maps', mapFile);
         if (fs.existsSync(mapPath)) {
           const mapContent = fs.readFileSync(mapPath, 'utf-8');
+          console.log(`🗺️  Loaded map from file: ${mapFile}`);
           return parseMapFile(mapContent);
         } else {
-          console.warn(`⚠️  Map file not found: ${mapFile}, using test map`);
+          console.warn(`⚠️  Map file not found: ${mapFile}, generating procedural map`);
         }
       }
       
-      // Use test map as default
-      return createTestMap();
+      // Generate procedural map with specified dimensions
+      console.log(`🗺️  Generating procedural map: ${width}x${height}`);
+      const seed = Date.now(); // Use timestamp as seed for reproducibility
+      const mapData = generateRandomMap(width, height, seed);
+      console.log(`✅ Generated map with seed ${seed}`);
+      
+      return mapData;
     } catch (error) {
-      console.error('❌ Error loading map:', error);
-      return null;
+      console.error('❌ Error loading/generating map:', error);
+      // Final fallback to small test map
+      console.log('⚠️  Falling back to test map');
+      return createTestMap();
     }
   }
 

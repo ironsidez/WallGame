@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
-import { GameLobby, GameBoard, Login } from './components'
+import { GameLobby, GamePage, Login } from './components'
 import { useAuthStore } from './stores/authStore'
 import { useGameStore } from './stores/gameStore'
 import './App.css'
@@ -29,7 +29,7 @@ function App() {
           ) : (
             <>
               <Route path="/lobby" element={<GameLobby user={user} onLogout={logout} />} />
-              <Route path="/game/:gameId" element={<GameBoard user={user} />} />
+              <Route path="/game/:gameId" element={<GamePage />} />
               <Route path="*" element={<Navigate to={defaultRedirect} />} />
             </>
           )}

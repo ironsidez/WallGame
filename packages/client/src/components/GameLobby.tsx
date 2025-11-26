@@ -15,6 +15,28 @@ interface GameRoom {
   isParticipating?: boolean
 }
 
+interface GameSettings {
+  mapWidth: number
+  mapHeight: number
+  maxPlayers: number
+  prodTickInterval: number
+  popTickInterval: number
+  artifactReleaseTime: number
+  winConditionDuration: number
+  maxDuration: number | null
+}
+
+const DEFAULT_SETTINGS: GameSettings = {
+  mapWidth: 200,        // Smaller default for testing (spec says 1000)
+  mapHeight: 200,       // Smaller default for testing (spec says 2000)
+  maxPlayers: 100,
+  prodTickInterval: 10,
+  popTickInterval: 600,
+  artifactReleaseTime: 12,
+  winConditionDuration: 0.5,
+  maxDuration: null
+}
+
 interface GameLobbyProps {
   user: any
   onLogout: () => void
@@ -27,6 +49,8 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [newGameName, setNewGameName] = useState('')
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS)
   const [socket, setSocket] = useState<Socket | null>(null)
 
   useEffect(() => {
@@ -82,7 +106,19 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ name: newGameName.trim() }),
+        body: JSON.stringify({ 
+          name: newGameName.trim(),
+          settings: {
+            mapWidth: settings.mapWidth,
+            mapHeight: settings.mapHeight,
+            maxPlayers: settings.maxPlayers,
+            prodTickInterval: settings.prodTickInterval,
+            popTickInterval: settings.popTickInterval,
+            artifactReleaseTime: settings.artifactReleaseTime,
+            winConditionDuration: settings.winConditionDuration,
+            maxDuration: settings.maxDuration
+          }
+        }),
       })
 
       if (response.ok) {
@@ -191,19 +227,143 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
           <div className="create-game-section">
             <h2>Create New Game (Admin)</h2>
             <form onSubmit={createGame} className="create-game-form">
-              <input
-                type="text"
-                value={newGameName}
-                onChange={(e) => setNewGameName(e.target.value)}
-                placeholder="Enter game name..."
-                maxLength={50}
-                disabled={creating}
-                required
-              />
+              <div className="form-row">
+                <label htmlFor="gameName">Game Name</label>
+                <input
+                  id="gameName"
+                  type="text"
+                  value={newGameName}
+                  onChange={(e) => setNewGameName(e.target.value)}
+                  placeholder="Enter game name..."
+                  maxLength={50}
+                  disabled={creating}
+                  data-testid="game-name-input"
+                  required
+                />
+              </div>
+
+              <div className="form-row form-row-inline">
+                <div className="form-field">
+                  <label htmlFor="mapWidth">Map Width</label>
+                  <input
+                    id="mapWidth"
+                    type="number"
+                    value={settings.mapWidth}
+                    onChange={(e) => setSettings({ ...settings, mapWidth: parseInt(e.target.value) || 100 })}
+                    min={50}
+                    max={2000}
+                    disabled={creating}
+                    data-testid="map-width-input"
+                  />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="mapHeight">Map Height</label>
+                  <input
+                    id="mapHeight"
+                    type="number"
+                    value={settings.mapHeight}
+                    onChange={(e) => setSettings({ ...settings, mapHeight: parseInt(e.target.value) || 100 })}
+                    min={50}
+                    max={2000}
+                    disabled={creating}
+                    data-testid="map-height-input"
+                  />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="maxPlayers">Max Players</label>
+                  <input
+                    id="maxPlayers"
+                    type="number"
+                    value={settings.maxPlayers}
+                    onChange={(e) => setSettings({ ...settings, maxPlayers: parseInt(e.target.value) || 10 })}
+                    min={2}
+                    max={500}
+                    disabled={creating}
+                    data-testid="max-players-input"
+                  />
+                </div>
+              </div>
+
+              <button 
+                type="button" 
+                className="btn-link"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+              >
+                {showAdvanced ? '▼ Hide Advanced Settings' : '▶ Show Advanced Settings'}
+              </button>
+
+              {showAdvanced && (
+                <div className="advanced-settings">
+                  <div className="form-row form-row-inline">
+                    <div className="form-field">
+                      <label htmlFor="prodTickInterval">Prod Tick Interval</label>
+                      <input
+                        id="prodTickInterval"
+                        type="number"
+                        value={settings.prodTickInterval}
+                        onChange={(e) => setSettings({ ...settings, prodTickInterval: parseInt(e.target.value) || 10 })}
+                        min={1}
+                        max={100}
+                        disabled={creating}
+                        data-testid="prod-tick-input"
+                      />
+                      <span className="field-hint">Game ticks per prod tick</span>
+                    </div>
+                    <div className="form-field">
+                      <label htmlFor="popTickInterval">Pop Tick Interval</label>
+                      <input
+                        id="popTickInterval"
+                        type="number"
+                        value={settings.popTickInterval}
+                        onChange={(e) => setSettings({ ...settings, popTickInterval: parseInt(e.target.value) || 600 })}
+                        min={10}
+                        max={3600}
+                        disabled={creating}
+                        data-testid="pop-tick-input"
+                      />
+                      <span className="field-hint">Game ticks per pop tick</span>
+                    </div>
+                  </div>
+
+                  <div className="form-row form-row-inline">
+                    <div className="form-field">
+                      <label htmlFor="artifactReleaseTime">Artifact Release</label>
+                      <input
+                        id="artifactReleaseTime"
+                        type="number"
+                        value={settings.artifactReleaseTime}
+                        onChange={(e) => setSettings({ ...settings, artifactReleaseTime: parseInt(e.target.value) || 12 })}
+                        min={1}
+                        max={100}
+                        disabled={creating}
+                        data-testid="artifact-release-input"
+                      />
+                      <span className="field-hint">Pop ticks until artifacts</span>
+                    </div>
+                    <div className="form-field">
+                      <label htmlFor="winConditionDuration">Win Duration (hrs)</label>
+                      <input
+                        id="winConditionDuration"
+                        type="number"
+                        step="0.5"
+                        value={settings.winConditionDuration}
+                        onChange={(e) => setSettings({ ...settings, winConditionDuration: parseFloat(e.target.value) || 0.5 })}
+                        min={0.5}
+                        max={24}
+                        disabled={creating}
+                        data-testid="win-duration-input"
+                      />
+                      <span className="field-hint">Hours to hold artifacts</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <button 
                 type="submit" 
-                className="btn-primary"
+                className="btn-primary btn-create"
                 disabled={creating || !newGameName.trim()}
+                data-testid="create-game-button"
               >
                 {creating ? 'Creating...' : 'Create Game'}
               </button>

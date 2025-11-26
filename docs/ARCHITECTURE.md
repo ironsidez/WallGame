@@ -401,6 +401,126 @@ This architecture supports hundreds of concurrent players with real-time territo
 
 ---
 
+## 🗺️ **Square-Based State Model**
+
+> **Design Principle**: All game state is organized by map square coordinates. Every entity has an (x, y) position.
+
+### **Why Square-Based Storage?**
+
+1. **Spatial Queries Are Primary** - "What's at (x,y)?" and "What's near (x,y)?" are the most common operations
+2. **Fog of War Filtering** - Easy to determine what updates to send per player based on visible squares
+3. **Localized Updates** - Changing one area doesn't require reloading entire game state
+4. **Dynamic Resources** - Terrain resources (crops, wood, stone, metal) change per square over time
+
+### **Square State Structure**
+
+```typescript
+// Each map square maintains its own state
+interface SquareState {
+  position: { x: number, y: number };
+  
+  // Terrain (static after map generation)
+  terrainType: TerrainType;
+  
+  // Resources (DYNAMIC - change every prod tick)
+  resources: {
+    crops: number;   // Renewable, based on surrounding terrain
+    wood: number;    // Renewable, based on surrounding terrain
+    stone: number;   // Finite, depletes when mined
+    metal: number;   // Finite, depletes when mined
+  };
+  
+  // Control
+  ownerId: string | null;
+  
+  // Entities on this square
+  unitIds: string[];        // Max 6 per player for movement
+  buildingId: string | null;
+  artifactId: string | null;
+  
+  // Vision (who can see this square)
+  visionProviders: string[]; // Unit/building IDs providing vision here
+}
+```
+
+### **Redis Key Structure (Per Game)**
+
+```
+game:{gameId}:meta                    # Game settings, phase, tick count
+game:{gameId}:players                 # SET of player IDs
+game:{gameId}:player:{playerId}       # Player session state
+
+# Square-based storage (chunked for efficiency)
+game:{gameId}:chunk:{cx}:{cy}         # 100x100 square chunks
+game:{gameId}:chunk:{cx}:{cy}:resources  # Resource state for chunk
+
+# Entity indexes (for fast entity lookups)
+game:{gameId}:units                   # HASH { unitId: JSON }
+game:{gameId}:cities                  # HASH { cityId: JSON }
+game:{gameId}:buildings               # HASH { buildingId: JSON }
+
+# Spatial index (for "what's near X,Y?" queries)
+game:{gameId}:spatial:{cx}:{cy}       # SET of entity IDs in chunk
+```
+
+### **Resource Dynamics**
+
+Terrain resources are NOT static:
+
+| Resource | Behavior | Update Frequency |
+|----------|----------|------------------|
+| **Crops** | Renewable - regenerates based on adjacent plains | Every prod tick |
+| **Wood** | Renewable - regenerates based on adjacent forest | Every prod tick |
+| **Stone** | Finite - depletes when extracted | On extraction |
+| **Metal** | Finite - depletes when extracted | On extraction |
+
+```
+Regeneration Example:
+- Forest square with 100 wood
+- Player extracts 10 wood → 90 remaining
+- Adjacent squares average 80 wood
+- Next prod tick: +5 regeneration → 95 wood
+- Heavily harvested areas recover slower
+```
+
+### **Fog of War & Update Delivery**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    SERVER (processes everything)            │
+│                                                             │
+│  Combat in fog → Calculated normally, results stored        │
+│  Resource regen → Happens on all squares                    │
+│  Unit movement → Processed for all units                    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    VISION FILTER                            │
+│                                                             │
+│  For each player:                                           │
+│  1. Get visible squares (from their units/buildings)        │
+│  2. Filter updates to only visible squares                  │
+│  3. Send filtered updates via Socket.io                     │
+└─────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+         ┌─────────┐    ┌─────────┐    ┌─────────┐
+         │Player A │    │Player B │    │Player C │
+         │sees 500 │    │sees 300 │    │sees 450 │
+         │squares  │    │squares  │    │squares  │
+         └─────────┘    └─────────┘    └─────────┘
+```
+
+**Key Points:**
+- Server processes ALL game logic (authoritative)
+- Client is display-only
+- Players receive NO information about events in their fog of war
+- Combat between units in fog of war still happens, just isn't broadcast
+
+---
+
 ## 🚀 **ARCHITECTURE EVOLUTION ROADMAP**
 
 ### **Scaling Target Analysis**

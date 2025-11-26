@@ -37,24 +37,74 @@ class LobbyPage extends BasePage {
 
 
   /**
-   * Fill the create game form
+   * Fill the create game form with name and optional settings
+   * @param {string} gameName - Name for the game
+   * @param {Object} settings - Optional game settings
+   * @param {number} settings.mapWidth - Map width (default: 100)
+   * @param {number} settings.mapHeight - Map height (default: 100)
+   * @param {number} settings.maxPlayers - Max players (default: 100)
    */
-  async fillCreateGame(gameName, stepName = 'fill-create-game') {
+  async fillCreateGame(gameName, stepNameOrSettings = 'fill-create-game', maybeStepName = null) {
+    // Handle overloaded parameters
+    let settings = {};
+    let stepName = 'fill-create-game';
+    
+    if (typeof stepNameOrSettings === 'string') {
+      stepName = stepNameOrSettings;
+    } else if (typeof stepNameOrSettings === 'object') {
+      settings = stepNameOrSettings;
+      stepName = maybeStepName || 'fill-create-game';
+    }
+
     return await this.executeAction(stepName, 'lobby', async () => {
       console.log(`\n🎯 FILLING CREATE GAME FORM: ${gameName}`);
       
-      // Look for game name input
-      const gameNameInput = await this.page.locator(this.selectors.gameNameInput).first();
+      // Fill game name
+      const gameNameInput = await this.page.locator('[data-testid="game-name-input"]').first();
       
       if (!(await gameNameInput.isVisible())) {
-        throw new Error('Game name input not found on lobby page');
+        // Fallback to old selector
+        const fallbackInput = await this.page.locator(this.selectors.gameNameInput).first();
+        if (await fallbackInput.isVisible()) {
+          await fallbackInput.fill(gameName);
+        } else {
+          throw new Error('Game name input not found on lobby page');
+        }
+      } else {
+        await gameNameInput.fill(gameName);
       }
       
-      await gameNameInput.fill(gameName);
       this.createdGameName = gameName;
       console.log(`✅ Filled game name: ${gameName}`);
       
-      return { gameName, filled: true };
+      // Fill map width if provided
+      if (settings.mapWidth) {
+        const mapWidthInput = await this.page.locator('[data-testid="map-width-input"]');
+        if (await mapWidthInput.isVisible()) {
+          await mapWidthInput.fill(String(settings.mapWidth));
+          console.log(`✅ Set map width: ${settings.mapWidth}`);
+        }
+      }
+      
+      // Fill map height if provided
+      if (settings.mapHeight) {
+        const mapHeightInput = await this.page.locator('[data-testid="map-height-input"]');
+        if (await mapHeightInput.isVisible()) {
+          await mapHeightInput.fill(String(settings.mapHeight));
+          console.log(`✅ Set map height: ${settings.mapHeight}`);
+        }
+      }
+      
+      // Fill max players if provided
+      if (settings.maxPlayers) {
+        const maxPlayersInput = await this.page.locator('[data-testid="max-players-input"]');
+        if (await maxPlayersInput.isVisible()) {
+          await maxPlayersInput.fill(String(settings.maxPlayers));
+          console.log(`✅ Set max players: ${settings.maxPlayers}`);
+        }
+      }
+      
+      return { gameName, settings, filled: true };
     });
   }
 
