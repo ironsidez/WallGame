@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import { io, Socket } from 'socket.io-client'
+import { TerrainWeights } from '@wallgame/shared'
 
 interface GameRoom {
   id: string
@@ -16,9 +17,11 @@ interface GameRoom {
 }
 
 interface GameSettings {
+  mapSource: 'custom'  // Currently only custom supported
   mapWidth: number
   mapHeight: number
   maxPlayers: number
+  terrainWeights: TerrainWeights
   prodTickInterval: number
   popTickInterval: number
   artifactReleaseTime: number
@@ -26,10 +29,22 @@ interface GameSettings {
   maxDuration: number | null
 }
 
+// Default spawn frequencies (50 = standard rate, 0-200 range)
+const DEFAULT_TERRAIN_WEIGHTS: TerrainWeights = {
+  forest: 50,
+  hills: 50,
+  mountain: 50,
+  desert: 50,
+  swamp: 50,
+  water: 50
+}
+
 const DEFAULT_SETTINGS: GameSettings = {
+  mapSource: 'custom',
   mapWidth: 200,        // Smaller default for testing (spec says 1000)
   mapHeight: 200,       // Smaller default for testing (spec says 2000)
   maxPlayers: 100,
+  terrainWeights: { ...DEFAULT_TERRAIN_WEIGHTS },
   prodTickInterval: 10,
   popTickInterval: 600,
   artifactReleaseTime: 12,
@@ -112,6 +127,7 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
             mapWidth: settings.mapWidth,
             mapHeight: settings.mapHeight,
             maxPlayers: settings.maxPlayers,
+            terrainWeights: settings.terrainWeights,
             prodTickInterval: settings.prodTickInterval,
             popTickInterval: settings.popTickInterval,
             artifactReleaseTime: settings.artifactReleaseTime,
@@ -281,6 +297,38 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
                     disabled={creating}
                     data-testid="max-players-input"
                   />
+              </div>
+              </div>
+
+              <div className="terrain-weights-section">
+                <h4>Terrain Spawn Frequency</h4>
+                <p className="terrain-hint">50% = standard, 0% = none, 200% = 4x frequency</p>
+                <div className="terrain-sliders">
+                  {Object.entries(settings.terrainWeights).map(([terrain, weight]) => (
+                    <div key={terrain} className="terrain-slider">
+                      <label htmlFor={`terrain-${terrain}`}>
+                        <span className={`terrain-color terrain-${terrain}`}></span>
+                        {terrain.charAt(0).toUpperCase() + terrain.slice(1)}
+                      </label>
+                      <input
+                        id={`terrain-${terrain}`}
+                        type="range"
+                        min="0"
+                        max="200"
+                        value={weight}
+                        onChange={(e) => setSettings({
+                          ...settings,
+                          terrainWeights: {
+                            ...settings.terrainWeights,
+                            [terrain]: parseInt(e.target.value)
+                          }
+                        })}
+                        disabled={creating}
+                        data-testid={`terrain-${terrain}-slider`}
+                      />
+                      <span className="weight-value">{weight}%</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 

@@ -9,16 +9,12 @@ import {
   GameSettings,
   TerrainType,
   UnitType,
-  parseMapFile,
-  createTestMap,
   generateRandomMap,
   MapData
 } from '@wallgame/shared';
 import { RedisManager } from '../database/RedisManager';
 import { DatabaseManager } from '../database/DatabaseManager';
 import { v4 as uuidv4 } from 'uuid';
-import fs from 'fs';
-import path from 'path';
 
 export class GameManager {
   private gameStates: Map<string, GameState> = new Map();
@@ -50,6 +46,21 @@ export class GameManager {
         // Try to load from Redis first
         let gameState = await this.loadGameState(dbGame.id);
         
+        // Check if loaded game has terrain data - regenerate if missing
+        if (gameState && (!gameState.terrainData || gameState.terrainData.length === 0)) {
+          console.log(`🗺️ Regenerating terrain for game ${dbGame.name} (missing terrainData)`);
+          const mapData = await this.loadMap(
+            gameState.settings?.mapWidth || 200,
+            gameState.settings?.mapHeight || 200,
+            gameState.settings?.terrainWeights
+          );
+          if (mapData) {
+            gameState.terrainData = this.convertTerrainToData(mapData);
+            // Save updated state
+            await this.saveGameState(gameState);
+          }
+        }
+        
         // If not in Redis, create a new game state
         if (!gameState) {
           console.log(`🎮 Creating new game state for ${dbGame.name} (${dbGame.id})`);
@@ -69,6 +80,7 @@ export class GameManager {
               height: settings.mapHeight || 200,
               squares: new Map()
             },
+            terrainData: [], // Will be populated after map generation
             gamePhase: dbGame.status === 'waiting' ? GamePhase.WAITING : GamePhase.ACTIVE,
             currentTick: 0,
             lastPopulationTick: 0,
@@ -78,6 +90,8 @@ export class GameManager {
               maxPlayers: settings.maxPlayers || 100,
               mapWidth: settings.mapWidth || 200,
               mapHeight: settings.mapHeight || 200,
+              mapSource: settings.mapSource || 'custom',
+              terrainWeights: settings.terrainWeights,
               tickLengthMs: settings.tickLengthMs || 1000,
               ticksPerPopulationUpdate: settings.ticksPerPopulationUpdate || 10,
               cityBuildZoneRadius: settings.cityBuildZoneRadius || 10,
@@ -86,17 +100,23 @@ export class GameManager {
             }
           };
           
-          // Load map terrain (generate procedural if no file specified)
+          // Load map terrain (generate procedural)
           const mapData = await this.loadMap(
-            settings.mapFile || dbGame.map_file,
             settings.mapWidth || 200,
-            settings.mapHeight || 200
+            settings.mapHeight || 200,
+            settings.terrainWeights
           );
-          if (mapData) {
-            this.initializeGridFromMap(gameState, mapData);
-          } else {
-            // Fallback: initialize with default plains
-            this.initializeDefaultGrid(gameState);
+          if (mapData && gameState) {
+            // Store terrain as compact 2D array (not individual grid squares)
+            gameState.terrainData = this.convertTerrainToData(mapData);
+            console.log(`✅ Stored terrain data: ${settings.mapWidth}x${settings.mapHeight}`);
+          } else if (gameState) {
+            // Fallback: create default plains terrain data
+            gameState.terrainData = this.createDefaultTerrainData(
+              settings.mapWidth || 200,
+              settings.mapHeight || 200
+            );
+            console.log(`✅ Created default terrain data: ${settings.mapWidth || 200}x${settings.mapHeight || 200}`);
           }
           
           // Load players from database and add to game state
@@ -121,7 +141,9 @@ export class GameManager {
           }
         }
         
-        this.gameStates.set(dbGame.id, gameState);
+        if (gameState) {
+          this.gameStates.set(dbGame.id, gameState);
+        }
       }
       
       console.log(`✅ Loaded ${this.gameStates.size} games into memory`);
@@ -140,6 +162,8 @@ export class GameManager {
       maxPlayers: settings.maxPlayers || 100,
       mapWidth: settings.mapWidth || 200,
       mapHeight: settings.mapHeight || 200,
+      mapSource: settings.mapSource || 'custom',
+      terrainWeights: settings.terrainWeights,
       tickLengthMs: settings.tickLengthMs || 1000,
       ticksPerPopulationUpdate: settings.ticksPerPopulationUpdate || 10,
       cityBuildZoneRadius: settings.cityBuildZoneRadius || 10,
@@ -147,14 +171,14 @@ export class GameManager {
       minPlayerDistance: settings.minPlayerDistance || 10
     };
 
-    // Generate procedural map with specified dimensions
+    // Generate procedural map with specified dimensions and terrain weights
     const mapData = await this.loadMap(
-      settings.mapFile, 
       defaultSettings.mapWidth, 
-      defaultSettings.mapHeight
+      defaultSettings.mapHeight,
+      settings.terrainWeights
     );
     
-    // Use map dimensions if loaded (might differ from settings if loaded from file)
+    // Use map dimensions if generated
     if (mapData) {
       defaultSettings.mapWidth = mapData.dimensions.width;
       defaultSettings.mapHeight = mapData.dimensions.height;
@@ -170,8 +194,9 @@ export class GameManager {
       grid: {
         width: defaultSettings.mapWidth,
         height: defaultSettings.mapHeight,
-        squares: new Map()
+        squares: new Map() // Only populated for squares with entities/resources
       },
+      terrainData: [], // Will be set from mapData
       gamePhase: GamePhase.WAITING,
       currentTick: 0,
       lastPopulationTick: 0,
@@ -180,59 +205,65 @@ export class GameManager {
       settings: defaultSettings
     };
 
-    // Initialize grid with terrain from map
+    // Store terrain data from map (compact 2D array)
     if (mapData) {
-      this.initializeGridFromMap(gameState, mapData);
+      gameState.terrainData = this.convertTerrainToData(mapData);
+      console.log(`✅ Stored terrain data: ${defaultSettings.mapWidth}x${defaultSettings.mapHeight}`);
+      
+      // Debug: Count terrain types
+      const counts: Record<number, number> = {};
+      for (const row of gameState.terrainData) {
+        for (const t of row) {
+          counts[t] = (counts[t] || 0) + 1;
+        }
+      }
+      console.log(`🗺️  Terrain distribution:`, counts);
     } else {
-      // Fallback: initialize with default plains
-      this.initializeDefaultGrid(gameState);
+      // Fallback: create plains terrain data
+      gameState.terrainData = this.createDefaultTerrainData(defaultSettings.mapWidth, defaultSettings.mapHeight);
+      console.log(`✅ Created default terrain data: ${defaultSettings.mapWidth}x${defaultSettings.mapHeight}`);
     }
 
     this.gameStates.set(gameId, gameState);
-    await this.saveGameState(gameState);
+    
+    // Save game state asynchronously (don't block the response)
+    // For large maps, this can take several seconds
+    this.saveGameState(gameState).catch(error => {
+      console.error(`❌ Failed to save game state for ${gameId}:`, error);
+    });
     
     return gameState;
   }
 
   /**
-   * Load a map file or generate a procedural map
-   * @param mapFile - Optional map file to load
+   * Generate a procedural map with specified dimensions and terrain weights
    * @param width - Width for procedural generation (default 200)
    * @param height - Height for procedural generation (default 200)
+   * @param terrainWeights - Optional terrain weight configuration
    */
-  private async loadMap(mapFile?: string, width: number = 200, height: number = 200): Promise<MapData | null> {
+  private async loadMap(
+    width: number = 200, 
+    height: number = 200,
+    terrainWeights?: any
+  ): Promise<MapData | null> {
     try {
-      if (mapFile) {
-        // Load from specific file
-        const mapPath = path.join(__dirname, '../../maps', mapFile);
-        if (fs.existsSync(mapPath)) {
-          const mapContent = fs.readFileSync(mapPath, 'utf-8');
-          console.log(`🗺️  Loaded map from file: ${mapFile}`);
-          return parseMapFile(mapContent);
-        } else {
-          console.warn(`⚠️  Map file not found: ${mapFile}, generating procedural map`);
-        }
-      }
-      
-      // Generate procedural map with specified dimensions
+      // Generate procedural map with specified dimensions and weights
       console.log(`🗺️  Generating procedural map: ${width}x${height}`);
       const seed = Date.now(); // Use timestamp as seed for reproducibility
-      const mapData = generateRandomMap(width, height, seed);
+      const mapData = generateRandomMap(width, height, seed, terrainWeights);
       console.log(`✅ Generated map with seed ${seed}`);
       
       return mapData;
     } catch (error) {
-      console.error('❌ Error loading/generating map:', error);
-      // Final fallback to small test map
-      console.log('⚠️  Falling back to test map');
-      return createTestMap();
+      console.error('❌ Error generating map:', error);
+      return null;
     }
   }
 
   /**
    * Initialize grid with terrain from map data
    */
-  private initializeGridFromMap(gameState: GameState, mapData: ReturnType<typeof parseMapFile>): void {
+  private initializeGridFromMap(gameState: GameState, mapData: MapData): void {
     const { terrain } = mapData;
     
     for (let y = 0; y < terrain.length; y++) {
@@ -279,50 +310,103 @@ export class GameManager {
   }
 
   /**
+   * Convert map data to compact terrain data array
+   * terrain[y][x] = TerrainType enum value
+   */
+  private convertTerrainToData(mapData: { terrain: TerrainType[][] }): string[][] {
+    const height = mapData.terrain.length;
+    const width = height > 0 ? mapData.terrain[0].length : 0;
+    
+    console.log(`🔄 convertTerrainToData: ${height}x${width}`);
+    console.log(`   Input terrain[0][0-9]:`, mapData.terrain?.[0]?.slice(0, 10));
+    
+    // Create compact 2D array of terrain type strings
+    const terrainData: string[][] = [];
+    for (let y = 0; y < height; y++) {
+      const row: string[] = [];
+      for (let x = 0; x < width; x++) {
+        // TerrainType is a string enum ('plains', 'forest', etc.)
+        // Just pass through the string values directly
+        row.push(mapData.terrain[y][x]);
+      }
+      terrainData.push(row);
+    }
+    
+    console.log(`   Output terrainData[0][0-9]:`, terrainData[0]?.slice(0, 10));
+    
+    return terrainData;
+  }
+
+  /**
+   * Create default terrain data (all plains)
+   */
+  private createDefaultTerrainData(width: number, height: number): number[][] {
+    const terrainData: number[][] = [];
+    const plainsValue = Number(TerrainType.PLAINS);
+    for (let y = 0; y < height; y++) {
+      const row: number[] = new Array(width).fill(plainsValue);
+      terrainData.push(row);
+    }
+    return terrainData;
+  }
+
+  /**
+   * Get terrain at a specific position from terrain data
+   */
+  getTerrainAt(gameState: GameState, x: number, y: number): TerrainType {
+    if (gameState.terrainData && 
+        y >= 0 && y < gameState.terrainData.length &&
+        x >= 0 && x < (gameState.terrainData[0]?.length || 0)) {
+      return gameState.terrainData[y][x] as unknown as TerrainType;
+    }
+    return TerrainType.PLAINS; // Default fallback
+  }
+
+  /**
    * Get default attributes for terrain type
    */
   private getTerrainAttributes(terrain: TerrainType): any {
-    // Base attributes by terrain type
+    // Base attributes by terrain type (per GAME_DESIGN_SPEC.md)
     const attributes: Record<TerrainType, any> = {
       [TerrainType.PLAINS]: {
         movementCost: 1.0,
         resourceMultiplier: 1.2,
-        defenseBonu: 0
+        defenseBonus: 0
       },
       [TerrainType.FOREST]: {
-        movementCost: 1.5,
+        movementCost: 0.8,
         resourceMultiplier: 1.0,
         defenseBonus: 0.2
       },
-      [TerrainType.MOUNTAIN]: {
-        movementCost: 3.0,
-        resourceMultiplier: 0.5,
-        defenseBonus: 0.5
-      },
-      [TerrainType.WATER]: {
-        movementCost: 999, // Impassable for most units
-        resourceMultiplier: 0.0,
-        defenseBonus: 0
-      },
-      [TerrainType.DESERT]: {
-        movementCost: 1.2,
-        resourceMultiplier: 0.3,
-        defenseBonus: 0
-      },
-      [TerrainType.TUNDRA]: {
-        movementCost: 1.8,
-        resourceMultiplier: 0.4,
-        defenseBonus: 0.1
-      },
       [TerrainType.HILLS]: {
-        movementCost: 2.0,
+        movementCost: 0.6,
         resourceMultiplier: 0.8,
         defenseBonus: 0.3
       },
+      [TerrainType.MOUNTAIN]: {
+        movementCost: 0.4,
+        resourceMultiplier: 0.5,
+        defenseBonus: 0.5
+      },
+      [TerrainType.DESERT]: {
+        movementCost: 0.7,
+        resourceMultiplier: 0.3,
+        defenseBonus: 0
+      },
       [TerrainType.SWAMP]: {
-        movementCost: 2.5,
+        movementCost: 0.5,
         resourceMultiplier: 0.6,
         defenseBonus: -0.1
+      },
+      [TerrainType.RIVER]: {
+        movementCost: 0.6,  // Transport only
+        resourceMultiplier: 0.0,
+        defenseBonus: 0
+      },
+      [TerrainType.OCEAN]: {
+        movementCost: 0.3,  // Transport only
+        resourceMultiplier: 0.0,
+        defenseBonus: 0
       }
     };
     
@@ -446,10 +530,19 @@ export class GameManager {
           ? JSON.parse(dbGame.settings) 
           : dbGame.settings || {};
         
-        // Load map first to get dimensions
-        const mapData = await this.loadMap(settings.mapFile);
-        const mapWidth = mapData?.dimensions.width || settings.mapWidth || 50;
-        const mapHeight = mapData?.dimensions.height || settings.mapHeight || 50;
+        // Get dimensions from settings (passed from Create Game form)
+        const requestedWidth = settings.mapWidth || 200;
+        const requestedHeight = settings.mapHeight || 200;
+        console.log(`📐 Requested map dimensions: ${requestedWidth}x${requestedHeight}`);
+        
+        // Load map with specified dimensions and terrain weights
+        const mapData = await this.loadMap(
+          requestedWidth, 
+          requestedHeight,
+          settings.terrainWeights
+        );
+        const mapWidth = mapData?.dimensions.width || requestedWidth;
+        const mapHeight = mapData?.dimensions.height || requestedHeight;
           
         gameState = {
           id: dbGame.id,
@@ -463,6 +556,7 @@ export class GameManager {
             height: mapHeight,
             squares: new Map()
           },
+          terrainData: [], // Will be populated from mapData
           gamePhase: dbGame.status === 'waiting' ? GamePhase.WAITING : GamePhase.ACTIVE,
           currentTick: 0,
           lastPopulationTick: 0,
@@ -472,7 +566,8 @@ export class GameManager {
             maxPlayers: settings.maxPlayers || 100,
             mapWidth: mapWidth,
             mapHeight: mapHeight,
-            mapFile: settings.mapFile,
+            mapSource: settings.mapSource || 'custom',
+            terrainWeights: settings.terrainWeights,
             tickLengthMs: settings.tickLengthMs || 1000,
             ticksPerPopulationUpdate: settings.ticksPerPopulationUpdate || 10,
             cityBuildZoneRadius: settings.cityBuildZoneRadius || 10,
@@ -481,15 +576,23 @@ export class GameManager {
           }
         };
         
-        // Initialize grid with terrain from map
-        if (mapData) {
-          this.initializeGridFromMap(gameState, mapData);
-        } else {
-          this.initializeDefaultGrid(gameState);
+        // Store terrain as compact 2D array (not individual grid squares)
+        if (mapData && gameState) {
+          gameState.terrainData = this.convertTerrainToData(mapData);
+          console.log(`✅ Stored terrain data: ${mapWidth}x${mapHeight}`);
+        } else if (gameState) {
+          // Fallback: create default plains terrain data
+          gameState.terrainData = this.createDefaultTerrainData(mapWidth, mapHeight);
+          console.log(`✅ Created default terrain data: ${mapWidth}x${mapHeight}`);
         }
         
-        this.gameStates.set(gameId, gameState);
-        await this.saveGameState(gameState);
+        if (gameState) {
+          this.gameStates.set(gameId, gameState);
+          // Save asynchronously for large maps
+          this.saveGameState(gameState).catch(error => {
+            console.error(`❌ Failed to save game state for ${gameId}:`, error);
+          });
+        }
       } else {
         console.warn(`⚠️ Game ${gameId} not found in database`);
       }
@@ -593,7 +696,8 @@ export class GameManager {
           width: gameState.grid.width,
           height: gameState.grid.height,
           squares: gameState.grid.squares ? Object.fromEntries(gameState.grid.squares) : {}
-        }
+        },
+        terrainData: gameState.terrainData // Preserve terrain data
       };
 
       await this.redisManager.setGameState(gameState.id, serializable);
@@ -622,7 +726,8 @@ export class GameManager {
           width: data.grid?.width || 50,
           height: data.grid?.height || 50,
           squares: new Map(data.grid?.squares ? Object.entries(data.grid.squares) : [])
-        }
+        },
+        terrainData: data.terrainData || [] // Preserve terrain data
       };
     } catch (error) {
       console.error(`❌ Failed to parse game state for ${gameId}:`, error);

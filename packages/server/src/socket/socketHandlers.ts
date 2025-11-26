@@ -1,9 +1,29 @@
 import { Server as SocketServer } from 'socket.io';
 import { GameManager } from '../game/GameManager';
 import { DatabaseManager } from '../database/DatabaseManager';
-import { ActionType } from '@wallgame/shared';
+import { ActionType, GameState } from '@wallgame/shared';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
+
+/**
+ * Serialize game state for socket transmission
+ * Converts Maps to plain objects and ensures terrainData is included
+ */
+function serializeGameState(gameState: GameState): any {
+  return {
+    ...gameState,
+    players: Object.fromEntries(gameState.players || new Map()),
+    cities: Object.fromEntries(gameState.cities || new Map()),
+    buildings: Object.fromEntries(gameState.buildings || new Map()),
+    units: Object.fromEntries(gameState.units || new Map()),
+    grid: {
+      width: gameState.grid.width,
+      height: gameState.grid.height,
+      squares: {} // Don't send squares - client uses terrainData
+    },
+    terrainData: gameState.terrainData || []
+  };
+}
 
 export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, databaseManager: DatabaseManager) {
   io.on('connection', (socket) => {
@@ -82,22 +102,9 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         gameState = await gameManager.getGameState(gameId);
         
         if (gameState) {
-          // Serialize Maps to objects for socket transmission
-          const serializedState = {
-            ...gameState,
-            players: Object.fromEntries(gameState.players || []),
-            cities: Object.fromEntries(gameState.cities || []),
-            buildings: Object.fromEntries(gameState.buildings || []),
-            units: Object.fromEntries(gameState.units || []),
-            grid: {
-              width: gameState.grid.width,
-              height: gameState.grid.height,
-              squares: Object.fromEntries(gameState.grid.squares || [])
-            }
-          };
-          
+          // Serialize game state (converts Maps, includes terrainData)
+          const serializedState = serializeGameState(gameState);
           socket.emit('game-state', serializedState);
-          console.log(`📊 Sent game state with ${Object.keys(serializedState.grid.squares).length} grid squares`);
         }
         
         // Notify other players
@@ -186,10 +193,10 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
             timestamp: new Date()
           });
           
-          // Send updated game state
+          // Send updated game state (properly serialized)
           const gameState = await gameManager.getGameState(gameId);
           if (gameState) {
-            io.to(gameId).emit('game-state-update', gameState);
+            io.to(gameId).emit('game-state-update', serializeGameState(gameState));
           }
         } else {
           socket.emit('action-failed', {

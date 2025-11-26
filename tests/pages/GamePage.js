@@ -150,6 +150,145 @@ class GamePage extends BasePage {
   }
 
   /**
+   * Verify terrain variety on the game canvas
+   * Waits for terrain to load and checks that multiple terrain types are present
+   */
+  async verifyTerrainVariety(stepName = 'verify-terrain-variety') {
+    return await this.executeAction(stepName, 'game', async () => {
+      console.log('\n🗺️ VERIFYING TERRAIN VARIETY');
+      
+      // Listen to console logs from the browser
+      const consoleLogs = [];
+      this.page.on('console', msg => {
+        if (msg.text().includes('terrainData') || msg.text().includes('game-state')) {
+          consoleLogs.push(msg.text());
+        }
+      });
+      
+      // Wait 2 seconds for terrain to load
+      console.log('⏳ Waiting 2 seconds for terrain to load...');
+      await this.page.waitForTimeout(2000);
+      
+      // Print captured console logs
+      if (consoleLogs.length > 0) {
+        console.log('📋 Browser console logs:');
+        consoleLogs.forEach(log => console.log('  ', log));
+      }
+      
+      // Check if terrainData exists in game state
+      const stateCheck = await this.page.evaluate(() => {
+        // @ts-ignore - accessing Zustand store from window
+        const gameStore = window.__ZUSTAND_STORES__?.gameStore;
+        const currentGame = gameStore?.getState?.()?.currentGame;
+        
+        return {
+          hasGameStore: !!gameStore,
+          hasCurrentGame: !!currentGame,
+          hasTerrainData: !!currentGame?.terrainData,
+          terrainDataRows: currentGame?.terrainData?.length || 0,
+          terrainDataCols: currentGame?.terrainData?.[0]?.length || 0,
+          terrainSample: currentGame?.terrainData?.[0]?.slice(0, 10)
+        };
+      });
+      
+      console.log('📊 Game state check:', stateCheck);
+      
+      // Get terrain data from browser
+      const terrainInfo = await this.page.evaluate(() => {
+        // Check if canvas exists and has drawn content
+        const canvas = document.querySelector('canvas');
+        if (!canvas) {
+          return { error: 'No canvas found' };
+        }
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          return { error: 'No canvas context' };
+        }
+        
+        // Sample pixels from canvas to detect color variety
+        const width = canvas.width;
+        const height = canvas.height;
+        const sampleSize = 200; // Sample 200 pixels for better coverage
+        
+        const colors = new Map();
+        
+        for (let i = 0; i < sampleSize; i++) {
+          const x = Math.floor(Math.random() * width);
+          const y = Math.floor(Math.random() * height);
+          const pixel = ctx.getImageData(x, y, 1, 1).data;
+          // Only count non-black, non-transparent pixels
+          if (pixel[3] > 0) { // Alpha > 0
+            const rgb = `${pixel[0]},${pixel[1]},${pixel[2]}`;
+            colors.set(rgb, (colors.get(rgb) || 0) + 1);
+          }
+        }
+        
+        // Define expected terrain colors (from GameGrid.tsx)
+        // Allow some tolerance for anti-aliasing/rendering differences
+        const terrainColors = {
+          plains: { r: 124, g: 186, b: 95 },     // #7cba5f
+          forest: { r: 45, g: 90, b: 39 },       // #2d5a27
+          hills: { r: 139, g: 115, b: 85 },      // #8b7355
+          mountain: { r: 90, g: 90, b: 90 },     // #5a5a5a
+          desert: { r: 212, g: 184, b: 113 },    // #d4b871
+          swamp: { r: 74, g: 90, b: 58 },        // #4a5a3a
+          river: { r: 74, g: 144, b: 217 },      // #4a90d9
+          ocean: { r: 37, g: 99, b: 168 }        // #2563a8
+        };
+        
+        // Check for color matches with tolerance
+        const tolerance = 10; // Allow ±10 in each RGB channel
+        const detectedTerrains = [];
+        const colorMatches = {};
+        
+        for (const [rgb, count] of colors.entries()) {
+          const [r, g, b] = rgb.split(',').map(Number);
+          for (const [terrainType, expected] of Object.entries(terrainColors)) {
+            if (Math.abs(r - expected.r) <= tolerance &&
+                Math.abs(g - expected.g) <= tolerance &&
+                Math.abs(b - expected.b) <= tolerance) {
+              if (!detectedTerrains.includes(terrainType)) {
+                detectedTerrains.push(terrainType);
+                colorMatches[terrainType] = { actual: rgb, expected: `${expected.r},${expected.g},${expected.b}`, count };
+              }
+            }
+          }
+        }
+        
+        return {
+          uniqueColors: colors.size,
+          detectedTerrains,
+          terrainCount: detectedTerrains.length,
+          colorSamples: Array.from(colors.entries()).slice(0, 10), // First 10 colors with counts
+          colorMatches
+        };
+      });
+      
+      console.log(`   Unique colors detected: ${terrainInfo.uniqueColors}`);
+      console.log(`   Terrain types found: ${terrainInfo.detectedTerrains?.join(', ') || 'none'}`);
+      console.log(`   Total terrain types: ${terrainInfo.terrainCount || 0}`);
+      console.log(`   Color samples (first 10):`, terrainInfo.colorSamples);
+      console.log(`   Color matches:`, terrainInfo.colorMatches);
+      
+      if (terrainInfo.error) {
+        throw new Error(`Terrain verification failed: ${terrainInfo.error}`);
+      }
+      
+      if (terrainInfo.terrainCount < 2) {
+        throw new Error(`Expected multiple terrain types, but only found ${terrainInfo.terrainCount}: ${terrainInfo.detectedTerrains?.join(', ')}. Color samples: ${JSON.stringify(terrainInfo.colorSamples?.slice(0, 5))}`);
+      }
+      
+      console.log(`✅ Terrain variety confirmed: ${terrainInfo.terrainCount} different terrain types`);
+      
+      return {
+        success: true,
+        ...terrainInfo
+      };
+    });
+  }
+
+  /**
    * Leave the current game
    */
   async leaveGame(stepName = 'leave-game') {

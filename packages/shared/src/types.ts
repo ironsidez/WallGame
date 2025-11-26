@@ -12,12 +12,12 @@ export interface Position {
 export enum TerrainType {
   PLAINS = 'plains',
   FOREST = 'forest',
-  MOUNTAIN = 'mountain',
-  WATER = 'water',
-  DESERT = 'desert',
-  TUNDRA = 'tundra',
   HILLS = 'hills',
-  SWAMP = 'swamp'
+  MOUNTAIN = 'mountain',
+  DESERT = 'desert',
+  SWAMP = 'swamp',
+  RIVER = 'river',
+  OCEAN = 'ocean'
 }
 
 export interface TerrainAttributes {
@@ -150,8 +150,15 @@ export enum UnitAbility {
 export interface GameGrid {
   width: number;
   height: number;
-  squares: Map<string, GridSquare>; // Key: "x,y"
+  squares: Map<string, GridSquare>; // Key: "x,y" - only contains squares with entities/resources
 }
+
+/**
+ * Compact terrain storage - 2D array of TerrainType values
+ * This is stored separately from grid squares for efficiency
+ * Client fetches this once and uses it for rendering
+ */
+export type TerrainData = string[][]; // terrain[y][x] = TerrainType enum string value ('plains', 'forest', etc.)
 
 export interface GameState {
   id: string;
@@ -161,6 +168,7 @@ export interface GameState {
   buildings: Map<string, Building>;
   units: Map<string, Unit>;
   grid: GameGrid;
+  terrainData: TerrainData; // Compact terrain storage (generated once, never sent in updates)
   gamePhase: GamePhase;
   currentTick: number;
   lastPopulationTick: number;
@@ -177,11 +185,31 @@ export enum GamePhase {
   ENDED = 'ended'
 }
 
+/**
+ * Terrain spawn frequency multipliers (0-200 scale)
+ * - 0 = terrain never spawns
+ * - 50 = standard/default spawn rate  
+ * - 100 = 2x frequency
+ * - 200 = 4x frequency
+ * 
+ * Plains is the default terrain - other terrains spawn on top based on these frequencies
+ */
+export interface TerrainWeights {
+  forest: number;
+  hills: number;
+  mountain: number;
+  desert: number;
+  swamp: number;
+  water: number; // Used for both River and Ocean
+}
+
 export interface GameSettings {
   maxPlayers: number;
   mapWidth: number;
   mapHeight: number;
-  mapFile?: string; // Optional map file to load terrain from
+  mapSource: 'custom' | 'premade'; // How the map is generated
+  premadeMapId?: string; // ID of premade map if mapSource is 'premade'
+  terrainWeights?: TerrainWeights; // Terrain generation weights (for custom maps)
   tickLengthMs: number; // Duration of each game tick in milliseconds
   ticksPerPopulationUpdate: number; // How many ticks between pop updates
   cityBuildZoneRadius: number; // Max build distance from city center

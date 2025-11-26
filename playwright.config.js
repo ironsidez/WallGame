@@ -47,12 +47,14 @@ module.exports = defineConfig({
     {
       command: 'npm run dev:client',
       port: 3000,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: true, // Always reuse if server is running
+      timeout: 60000,
     },
     {
       command: 'npm run dev:server',
       port: 3001,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: true, // Always reuse if server is running
+      timeout: 60000,
     },
   ],
 });

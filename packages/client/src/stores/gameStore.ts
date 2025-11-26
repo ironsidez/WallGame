@@ -75,10 +75,20 @@ export const useGameStore = create<GameStore>()(
     })
 
     newSocket.on('game-state', (gameState: GameState) => {
+      const terrainRows = (gameState as any)?.terrainData?.length || 'NONE';
+      const terrainCols = terrainRows !== 'NONE' ? (gameState as any)?.terrainData[0]?.length || 0 : 0;
+      console.log('📥 game-state received');
+      console.log('   terrainData:', terrainRows, 'x', terrainCols);
+      console.log('   full gameState keys:', Object.keys(gameState));
+      console.log('   terrainData sample [0][0]:', (gameState as any)?.terrainData?.[0]?.[0]);
       set({ currentGame: gameState })
     })
 
     newSocket.on('game-state-update', (gameState: GameState) => {
+      const terrainRows = (gameState as any)?.terrainData?.length || 'NONE';
+      const terrainCols = terrainRows !== 'NONE' ? (gameState as any)?.terrainData[0]?.length || 0 : 0;
+      console.log('📥 game-state-update received');
+      console.log('   terrainData:', terrainRows, 'x', terrainCols);
       set({ currentGame: gameState })
     })
 
@@ -183,7 +193,7 @@ export const useGameStore = create<GameStore>()(
     {
       name: 'game-storage',
       partialize: (state) => ({
-        currentGameId: state.currentGameId, // Only persist the game ID
+        currentGameId: state.currentGameId, // Only persist the game ID, not the game state
       }),
     }
   )

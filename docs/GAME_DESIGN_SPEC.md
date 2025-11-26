@@ -204,7 +204,7 @@ A single cell on the game map. All entities exist on grid squares.
 |----------|------|-------------|
 | location | [Location](#location) | Position on the map |
 | terrainType | [TerrainType](#terrain-types) | Type of terrain |
-| ownerId | string \| null | Player who controls this square |
+| Resources | Resources | Resources available in the square |
 | visibleTo | string[] | Player/Alliance IDs that can currently see this square |
 
 ### Visibility

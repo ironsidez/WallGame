@@ -68,8 +68,8 @@ test('WallGame Complete Multi-User Flow', async ({ page }, testInfo) => {
     // Step 6: Fill create game form with settings
     console.log(`\n🎯 Step ${stepNum}: Fill Create Game Form`);
     const gameSettings = {
-      mapWidth: 100,
-      mapHeight: 100,
+      mapWidth: 2000,
+      mapHeight: 2000,
       maxPlayers: 50
     };
     await lobbyPage.fillCreateGame(gameName, gameSettings, `Step-${stepNum}-fill-create-game`);
@@ -127,6 +127,8 @@ test('WallGame Complete Multi-User Flow', async ({ page }, testInfo) => {
 
     // Step 15: Join the game
     console.log(`\n🎮 Step ${stepNum}: User2 Joins Game`);
+    // Clear localStorage to avoid stale game state
+    await page.evaluate(() => localStorage.clear());
     await lobbyPage.joinGame(gameName, `Step-${stepNum}-user2-join-game`);
     stepNum++;
 
@@ -135,7 +137,13 @@ test('WallGame Complete Multi-User Flow', async ({ page }, testInfo) => {
     await gamePage.verifyInGame(`Step-${stepNum}-user2-in-game`);
     stepNum++;
 
-    // Step 17: Verify game info shows correct name and 1/1 players
+    // Step 17: Verify terrain variety (wait 2 seconds then check)
+    console.log(`\n🗺️ Step ${stepNum}: Verify Terrain Variety`);
+    const terrainCheck = await gamePage.verifyTerrainVariety(`Step-${stepNum}-verify-terrain-variety`);
+    console.log(`   Result: ${terrainCheck.success ? '✅ PASS' : '❌ FAIL'} - ${terrainCheck.terrainCount} terrain types`);
+    stepNum++;
+
+    // Step 18: Verify game info shows correct name and 1/1 players
     console.log(`\n🔍 Step ${stepNum}: Verify Game Info (name and 1/1 players)`);
     const gameInfo1 = await gamePage.verifyGameInfo({
       gameName: gameName.substring(0, 10), // Partial match
@@ -145,28 +153,28 @@ test('WallGame Complete Multi-User Flow', async ({ page }, testInfo) => {
     console.log(`   Result: ${gameInfo1.success ? '✅ PASS' : '❌ FAIL'}`);
     stepNum++;
 
-    // Step 18: Leave game
+    // Step 19: Leave game
     console.log(`\n🚪 Step ${stepNum}: User2 Leaves Game`);
     await gamePage.leaveGame(`Step-${stepNum}-user2-leave-game`);
     stepNum++;
 
-    // Step 19: Verify back on lobby
+    // Step 20: Verify back on lobby
     console.log(`\n🏠 Step ${stepNum}: Verify User2 Back on Lobby`);
     await lobbyPage.verifyOnLobby(`Step-${stepNum}-user2-back-on-lobby`);
     stepNum++;
 
-    // Step 20: Verify game shows 0/1 players
+    // Step 21: Verify game shows 0/1 players
     console.log(`\n🔢 Step ${stepNum}: Verify Game is 0/1 Players`);
     const count2 = await lobbyPage.verifyGamePlayerCount(gameName, 0, 1, `Step-${stepNum}-verify-0-1`);
     console.log(`   Result: ${count2.success ? '✅ PASS' : '❌ FAIL'} (actual: ${count2.actualOnline}/${count2.actualTotal})`);
     stepNum++;
 
-    // Step 21: Logout User2
+    // Step 22: Logout User2
     console.log(`\n🚪 Step ${stepNum}: User2 Logout`);
     await lobbyPage.logout(`Step-${stepNum}-user2-logout`);
     stepNum++;
 
-    // Step 22: Verify on login
+    // Step 23: Verify on login
     console.log(`\n🔐 Step ${stepNum}: Verify Back on Login`);
     await loginPage.verifyOnLogin(`Step-${stepNum}-verify-user2-logout`);
     stepNum++;
@@ -177,38 +185,38 @@ test('WallGame Complete Multi-User Flow', async ({ page }, testInfo) => {
     console.log('\n📋 PHASE 3: Admin Joins Game');
     console.log('=============================');
 
-    // Step 23: Login as Admin again
+    // Step 24: Login as Admin again
     console.log(`\n📝 Step ${stepNum}: Login as Admin (${ADMIN_CREDENTIALS.username})`);
     await loginPage.fillCredentials(ADMIN_CREDENTIALS.username, ADMIN_CREDENTIALS.password, `Step-${stepNum}-admin-credentials-2`);
     stepNum++;
 
-    // Step 24: Submit login
+    // Step 25: Submit login
     console.log(`\n🚀 Step ${stepNum}: Submit Admin Login`);
     await loginPage.submitLogin(`Step-${stepNum}-submit-admin-login-2`);
     stepNum++;
 
-    // Step 25: Verify on lobby
+    // Step 26: Verify on lobby
     console.log(`\n🏠 Step ${stepNum}: Verify Admin on Lobby`);
     await lobbyPage.verifyOnLobby(`Step-${stepNum}-admin-on-lobby-2`);
     stepNum++;
 
-    // Step 26: Verify game shows 0/1 players
-    console.log(`\n� Step ${stepNum}: Verify Game is 0/1 Players`);
+    // Step 27: Verify game shows 0/1 players
+    console.log(`\n🔢 Step ${stepNum}: Verify Game is 0/1 Players`);
     const count3 = await lobbyPage.verifyGamePlayerCount(gameName, 0, 1, `Step-${stepNum}-verify-0-1-admin`);
     console.log(`   Result: ${count3.success ? '✅ PASS' : '❌ FAIL'} (actual: ${count3.actualOnline}/${count3.actualTotal})`);
     stepNum++;
 
-    // Step 27: Join the game
+    // Step 28: Join the game
     console.log(`\n🎮 Step ${stepNum}: Admin Joins Game`);
     await lobbyPage.joinGame(gameName, `Step-${stepNum}-admin-join-game`);
     stepNum++;
 
-    // Step 28: Verify in game
+    // Step 29: Verify in game
     console.log(`\n🎮 Step ${stepNum}: Verify Admin In Game`);
     await gamePage.verifyInGame(`Step-${stepNum}-admin-in-game`);
     stepNum++;
 
-    // Step 29: Verify game info shows correct name and 1/2 players (1 online, 2 total)
+    // Step 30: Verify game info shows correct name and 1/2 players (1 online, 2 total)
     console.log(`\n🔍 Step ${stepNum}: Verify Game Info (name and 1/2 players)`);
     const gameInfo2 = await gamePage.verifyGameInfo({
       gameName: gameName.substring(0, 10), // Partial match
@@ -218,39 +226,39 @@ test('WallGame Complete Multi-User Flow', async ({ page }, testInfo) => {
     console.log(`   Result: ${gameInfo2.success ? '✅ PASS' : '❌ FAIL'}`);
     stepNum++;
 
-    // Step 30: Leave game
+    // Step 31: Leave game
     console.log(`\n🚪 Step ${stepNum}: Admin Leaves Game`);
     await gamePage.leaveGame(`Step-${stepNum}-admin-leave-game`);
     stepNum++;
 
-    // Step 30: Verify back on lobby
+    // Step 32: Verify back on lobby
     console.log(`\n🏠 Step ${stepNum}: Verify Admin Back on Lobby`);
     await lobbyPage.verifyOnLobby(`Step-${stepNum}-admin-back-on-lobby`);
     stepNum++;
 
-    // Step 31: Verify game shows 0/2 players
+    // Step 33: Verify game shows 0/2 players
     console.log(`\n🔢 Step ${stepNum}: Verify Game is 0/2 Players`);
     const count4 = await lobbyPage.verifyGamePlayerCount(gameName, 0, 2, `Step-${stepNum}-verify-0-2`);
     console.log(`   Result: ${count4.success ? '✅ PASS' : '❌ FAIL'} (actual: ${count4.actualOnline}/${count4.actualTotal})`);
     stepNum++;
 
-    // Step 32: Delete the test game
+    // Step 34: Delete the test game
     console.log(`\n🗑️ Step ${stepNum}: Admin Deletes Test Game`);
     await lobbyPage.deleteGame(gameName, `Step-${stepNum}-delete-game`);
     stepNum++;
 
-    // Step 33: Verify game is deleted
+    // Step 35: Verify game is deleted
     console.log(`\n🔍 Step ${stepNum}: Verify Game Deleted`);
     const deleteResult = await lobbyPage.verifyGameDeleted(gameName, `Step-${stepNum}-verify-deleted`);
     console.log(`   Result: ${deleteResult.success ? '✅ PASS' : '❌ FAIL'}`);
     stepNum++;
 
-    // Step 34: Final logout
+    // Step 36: Final logout
     console.log(`\n🚪 Step ${stepNum}: Final Admin Logout`);
     await lobbyPage.logout(`Step-${stepNum}-final-logout`);
     stepNum++;
 
-    // Step 35: Verify back on login
+    // Step 37: Verify back on login
     console.log(`\n🔐 Step ${stepNum}: Verify Final Logout to Login`);
     await loginPage.verifyOnLogin(`Step-${stepNum}-final-verify-login`);
     stepNum++;

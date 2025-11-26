@@ -23,8 +23,21 @@ export function GameGrid() {
   const mapWidth = currentGame?.settings?.mapWidth || currentGame?.grid?.width || 100
   const mapHeight = currentGame?.settings?.mapHeight || currentGame?.grid?.height || 100
   
-  // Get grid squares from game state (can be object or Map)
+  // Get grid squares from game state (can be object or Map) - for entities
   const gridSquares: Record<string, any> = currentGame?.grid?.squares || {}
+  
+  // Get compact terrain data (2D array) for efficient terrain lookup
+  const terrainData: number[][] | undefined = (currentGame as any)?.terrainData
+  
+  // Debug logging for terrainData
+  useEffect(() => {
+    console.log('🗺️ GameGrid terrainData changed:', {
+      hasTerrainData: !!terrainData,
+      rows: terrainData?.length || 0,
+      cols: terrainData?.[0]?.length || 0,
+      sample: terrainData?.[0]?.[0]
+    });
+  }, [terrainData]);
 
   // Calculate viewport dimensions based on container size
   useEffect(() => {
@@ -68,8 +81,36 @@ export function GameGrid() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [mapWidth, mapHeight])
 
+  // Debug: Log terrainData once when it changes
+  useEffect(() => {
+    if (terrainData && terrainData.length > 0) {
+      // Count terrain types
+      const counts: Record<number, number> = {};
+      for (let y = 0; y < Math.min(terrainData.length, 100); y++) {
+        for (let x = 0; x < Math.min(terrainData[y]?.length || 0, 100); x++) {
+          const t = terrainData[y][x];
+          counts[t] = (counts[t] || 0) + 1;
+        }
+      }
+      console.log('🗺️ TerrainData received:', {
+        rows: terrainData.length,
+        cols: terrainData[0]?.length,
+        sample: terrainData[0]?.slice(0, 10),
+        distribution: counts
+      });
+    } else {
+      console.log('🗺️ No terrainData available');
+    }
+  }, [terrainData]);
+
   // Get terrain from actual game state, fallback to procedural
   const getTerrainAt = useCallback((x: number, y: number): TerrainType => {
+    // First check compact terrainData (efficient 2D array format)
+    if (terrainData && terrainData[y] && terrainData[y][x] !== undefined) {
+      return terrainData[y][x] as TerrainType
+    }
+    
+    // Fallback to gridSquares lookup (for partial updates)
     const key = positionToKey(x, y)
     const square = gridSquares[key]
     
@@ -77,15 +118,10 @@ export function GameGrid() {
       return square.terrain
     }
     
-    // Fallback procedural terrain if grid not loaded yet
-    const hash = (x * 374761393 + y * 668265263) % 1000
-    if (hash < 50) return TerrainType.WATER
-    if (hash < 150) return TerrainType.FOREST
-    if (hash < 200) return TerrainType.HILLS
-    if (hash < 220) return TerrainType.MOUNTAIN
-    if (hash < 250) return TerrainType.DESERT
+    // Default to plains while waiting for terrain data to load
+    // (avoids showing temporary procedural map that differs from server)
     return TerrainType.PLAINS
-  }, [gridSquares])
+  }, [terrainData, gridSquares])
 
   const getTerrainColor = useCallback((terrain: TerrainType): string => {
     const colors: Record<TerrainType, string> = {
@@ -93,10 +129,10 @@ export function GameGrid() {
       [TerrainType.FOREST]: '#2d5a27',
       [TerrainType.HILLS]: '#8b7355',
       [TerrainType.MOUNTAIN]: '#5a5a5a',
-      [TerrainType.WATER]: '#3b7dd8',
       [TerrainType.DESERT]: '#d4b871',
       [TerrainType.SWAMP]: '#4a5a3a',
-      [TerrainType.TUNDRA]: '#c8d8e4',
+      [TerrainType.RIVER]: '#4a90d9',
+      [TerrainType.OCEAN]: '#2563a8',
     }
     return colors[terrain] || '#7cba5f'
   }, [])

@@ -1,22 +1,18 @@
 /**
- * Map Generator - Creates procedural maps for WallGame
+ * Map Generator - Creates procedural terrain maps for WallGame
  * 
- * Map File Format:
- * - First line: WIDTH HEIGHT
- * - Remaining lines: Terrain characters representing each grid square
- * 
- * Terrain Characters:
- * . = Plains
- * ^ = Mountain
- * ~ = Water
- * T = Forest (Tree)
- * # = Hills
- * % = Desert
- * * = Tundra
- * @ = Swamp
+ * Terrain Types (per GAME_DESIGN_SPEC.md):
+ * - Plains: Default, good for crops
+ * - Forest: Wood resource
+ * - Hills: Stone/metal resources
+ * - Mountain: Stone/metal, high defense
+ * - Desert: Low crops, medium speed
+ * - Swamp: Fatigue penalty
+ * - River: Transport only, fatigue penalty
+ * - Ocean: Transport only, high fatigue
  */
 
-import { TerrainType } from './types';
+import { TerrainType, TerrainWeights } from './types';
 
 export interface MapDimensions {
   width: number;
@@ -28,61 +24,134 @@ export interface MapData {
   terrain: TerrainType[][];
 }
 
-// Terrain character to type mapping
-export const TERRAIN_CHARS: Record<string, TerrainType> = {
-  '.': TerrainType.PLAINS,
-  '^': TerrainType.MOUNTAIN,
-  '~': TerrainType.WATER,
-  'T': TerrainType.FOREST,
-  '#': TerrainType.HILLS,
-  '%': TerrainType.DESERT,
-  '*': TerrainType.TUNDRA,
-  '@': TerrainType.SWAMP,
-};
-
-// Reverse mapping for encoding
-export const TERRAIN_TO_CHAR: Record<TerrainType, string> = {
-  [TerrainType.PLAINS]: '.',
-  [TerrainType.MOUNTAIN]: '^',
-  [TerrainType.WATER]: '~',
-  [TerrainType.FOREST]: 'T',
-  [TerrainType.HILLS]: '#',
-  [TerrainType.DESERT]: '%',
-  [TerrainType.TUNDRA]: '*',
-  [TerrainType.SWAMP]: '@',
+// Default spawn frequencies (50 = standard rate)
+export const DEFAULT_TERRAIN_WEIGHTS: TerrainWeights = {
+  forest: 50,
+  hills: 50,
+  mountain: 50,
+  desert: 50,
+  swamp: 50,
+  water: 50
 };
 
 /**
- * Parse a map file string into MapData
+ * Generate a random map with configurable terrain frequency weights
+ * Weights are on 0-200 scale where 50 = standard spawn rate
  */
-export function parseMapFile(mapFileContent: string): MapData {
-  const lines = mapFileContent.trim().split('\n');
-  
-  // First line: dimensions
-  const [width, height] = lines[0].split(' ').map(Number);
-  
-  if (!width || !height) {
-    throw new Error('Invalid map file: missing or invalid dimensions');
-  }
-  
-  // Remaining lines: terrain
+export function generateRandomMap(
+  width: number, 
+  height: number, 
+  seed?: number,
+  weights: TerrainWeights = DEFAULT_TERRAIN_WEIGHTS
+): MapData {
   const terrain: TerrainType[][] = [];
   
+  // Create seeded random generator
+  const random = seededRandom(seed ?? Date.now());
+  
+  // For very large maps (>1M tiles), use fast generation
+  const totalTiles = width * height;
+  if (totalTiles > 1000000) {
+    return generateFastMap(width, height, random, weights);
+  }
+  
+  // Generate elevation map (0-1 values)
+  const elevationMap = generateNoiseMap(width, height, random, 0.02);
+  
+  // Generate moisture map (0-1 values) with different frequency
+  const moistureMap = generateNoiseMap(width, height, random, 0.03);
+  
+  // Convert noise to terrain using frequency weights
   for (let y = 0; y < height; y++) {
-    const lineIndex = y + 1;
-    if (lineIndex >= lines.length) {
-      throw new Error(`Invalid map file: missing line ${lineIndex} (height: ${height})`);
-    }
-    
-    const line = lines[lineIndex];
     const row: TerrainType[] = [];
     
     for (let x = 0; x < width; x++) {
-      const char = line[x];
-      const terrainType = TERRAIN_CHARS[char];
+      const elevation = elevationMap[y][x];
+      const moisture = moistureMap[y][x];
       
-      if (terrainType === undefined) {
-        throw new Error(`Invalid terrain character '${char}' at position (${x}, ${y})`);
+      const terrainType = selectTerrain(elevation, moisture, weights, random);
+      row.push(terrainType);
+    }
+    
+    terrain.push(row);
+  }
+  
+  return {
+    dimensions: { width, height },
+    terrain,
+  };
+}
+
+/**
+ * Fast map generation for very large maps (>1M tiles)
+ * Uses simpler hash-based generation instead of multi-octave noise
+ */
+function generateFastMap(
+  width: number,
+  height: number,
+  random: () => number,
+  weights: TerrainWeights
+): MapData {
+  const terrain: TerrainType[][] = [];
+  
+  // Pre-calculate probability thresholds from weights (50 = 1x standard rate)
+  const waterMult = weights.water / 50;
+  const mountainMult = weights.mountain / 50;
+  const hillsMult = weights.hills / 50;
+  const swampMult = weights.swamp / 50;
+  const desertMult = weights.desert / 50;
+  const forestMult = weights.forest / 50;
+  
+  // Generate seed offsets for variety
+  const seedX = random() * 10000;
+  const seedY = random() * 10000;
+  
+  for (let y = 0; y < height; y++) {
+    const row: TerrainType[] = [];
+    
+    for (let x = 0; x < width; x++) {
+      // Fast hash-based pseudo-random (much faster than noise)
+      const hash = fastHash(x + seedX, y + seedY);
+      // Extract three independent values from the hash (0-1 range)
+      const elevation = ((hash >>> 0) & 0xFF) / 255;
+      const moisture = ((hash >>> 8) & 0xFF) / 255;
+      const variety = ((hash >>> 16) & 0xFF) / 255;
+      
+      // Simple terrain selection based on hash values
+      // These thresholds are tuned to give good terrain distribution
+      let terrainType: TerrainType;
+      
+      // Ocean at very low elevation (about 5% of map with standard weights)
+      if (elevation < 0.05 * waterMult) {
+        terrainType = TerrainType.OCEAN;
+      }
+      // River at low elevation (about 5% of map)
+      else if (elevation < 0.10 * waterMult && variety < 0.5) {
+        terrainType = TerrainType.RIVER;
+      }
+      // Mountains at high elevation (about 8% of map)
+      else if (elevation > (1.0 - 0.08 * mountainMult)) {
+        terrainType = TerrainType.MOUNTAIN;
+      }
+      // Hills at medium-high elevation (about 12% of map)
+      else if (elevation > (1.0 - 0.20 * hillsMult) && variety < 0.6) {
+        terrainType = TerrainType.HILLS;
+      }
+      // Swamp at low elevation + high moisture (about 5% of map)
+      else if (elevation < 0.35 && moisture > (1.0 - 0.15 * swampMult)) {
+        terrainType = TerrainType.SWAMP;
+      }
+      // Desert at low moisture (about 10% of map)
+      else if (moisture < 0.15 * desertMult && elevation > 0.15) {
+        terrainType = TerrainType.DESERT;
+      }
+      // Forest at medium-high moisture (about 20% of map)
+      else if (moisture > (1.0 - 0.25 * forestMult)) {
+        terrainType = TerrainType.FOREST;
+      }
+      // Default to plains (remaining ~35%)
+      else {
+        terrainType = TerrainType.PLAINS;
       }
       
       row.push(terrainType);
@@ -98,90 +167,140 @@ export function parseMapFile(mapFileContent: string): MapData {
 }
 
 /**
- * Encode MapData into a map file string
+ * Fast integer hash function (much faster than noise)
  */
-export function encodeMapFile(mapData: MapData): string {
-  const lines: string[] = [];
-  
-  // First line: dimensions
-  lines.push(`${mapData.dimensions.width} ${mapData.dimensions.height}`);
-  
-  // Terrain lines
-  for (const row of mapData.terrain) {
-    const line = row.map(terrain => TERRAIN_TO_CHAR[terrain]).join('');
-    lines.push(line);
-  }
-  
-  return lines.join('\n');
+function fastHash(x: number, y: number): number {
+  let h = (Math.floor(x) * 374761393 + Math.floor(y) * 668265263) | 0;
+  h = (h ^ (h >> 13)) | 0;
+  h = (h * 1274126177) | 0;
+  return (h ^ (h >> 16)) | 0;
 }
 
 /**
- * Generate a random map using Perlin-like noise and biome distribution
+ * Convert frequency weights (0-200 scale) to spawn probabilities
+ * 50 = standard (1x), 100 = 2x, 200 = 4x
  */
-export function generateRandomMap(width: number, height: number, seed?: number): MapData {
-  const terrain: TerrainType[][] = [];
+function frequencyToMultiplier(weight: number): number {
+  return weight / 50; // 50 -> 1x, 100 -> 2x, 200 -> 4x
+}
+
+/**
+ * Select terrain type based on elevation, moisture, and frequency weights
+ * Plains is the default terrain - other terrains spawn on top based on conditions
+ */
+function selectTerrain(
+  elevation: number,
+  moisture: number,
+  weights: TerrainWeights,
+  random: () => number
+): TerrainType {
+  // Convert weights to multipliers
+  const waterMult = frequencyToMultiplier(weights.water);
+  const mountainMult = frequencyToMultiplier(weights.mountain);
+  const hillsMult = frequencyToMultiplier(weights.hills);
+  const swampMult = frequencyToMultiplier(weights.swamp);
+  const desertMult = frequencyToMultiplier(weights.desert);
+  const forestMult = frequencyToMultiplier(weights.forest);
   
-  // Simple pseudo-random generator with seed
-  const random = seed !== undefined 
-    ? seededRandom(seed)
-    : Math.random;
-  
-  // Generate base noise map
-  const noiseMap = generateNoiseMap(width, height, random);
-  
-  // Convert noise to terrain types
-  for (let y = 0; y < height; y++) {
-    const row: TerrainType[] = [];
-    
-    for (let x = 0; x < width; x++) {
-      const noise = noiseMap[y][x];
-      const terrainType = noiseToTerrain(noise, x, y, width, height);
-      row.push(terrainType);
+  // Water at very low elevation (modified by frequency)
+  if (elevation < 0.25 * waterMult && weights.water > 0) {
+    // Deeper = ocean, shallower = river
+    if (elevation < 0.12 * waterMult) {
+      return TerrainType.OCEAN;
     }
-    
-    terrain.push(row);
+    return TerrainType.RIVER;
   }
   
-  return {
-    dimensions: { width, height },
-    terrain,
-  };
+  // Mountains at very high elevation (modified by frequency)
+  const mountainThreshold = 1 - (0.15 * mountainMult);
+  if (elevation > mountainThreshold && weights.mountain > 0) {
+    return TerrainType.MOUNTAIN;
+  }
+  
+  // Hills at high elevation (modified by frequency)
+  const hillsThreshold = 1 - (0.30 * hillsMult);
+  if (elevation > hillsThreshold && weights.hills > 0) {
+    // Mix with mountains occasionally
+    if (random() < 0.2 * mountainMult && weights.mountain > 0) {
+      return TerrainType.MOUNTAIN;
+    }
+    return TerrainType.HILLS;
+  }
+  
+  // Swamp at low elevation with high moisture (modified by frequency)
+  const swampChance = 0.3 * swampMult;
+  if (elevation < 0.4 && moisture > 0.65 && weights.swamp > 0) {
+    if (random() < swampChance) {
+      return TerrainType.SWAMP;
+    }
+  }
+  
+  // Desert at low moisture (modified by frequency)
+  const desertChance = 0.4 * desertMult;
+  if (moisture < 0.35 && weights.desert > 0) {
+    if (random() < desertChance) {
+      return TerrainType.DESERT;
+    }
+  }
+  
+  // Forest based on moisture and frequency
+  const forestChance = moisture * 0.5 * forestMult;
+  if (moisture > 0.4 && weights.forest > 0) {
+    if (random() < forestChance) {
+      return TerrainType.FOREST;
+    }
+  }
+  
+  // Default to plains
+  return TerrainType.PLAINS;
 }
 
 /**
- * Generate a noise map (values 0-1)
+ * Generate a 2D noise map using multi-octave value noise
  */
-function generateNoiseMap(width: number, height: number, random: () => number): number[][] {
+function generateNoiseMap(
+  width: number, 
+  height: number, 
+  random: () => number,
+  baseFrequency: number = 0.02
+): number[][] {
   const noise: number[][] = [];
   
-  // Simple fractal noise (multiple octaves)
+  // Pre-generate random offsets for each octave
+  const octaveOffsets: { x: number; y: number }[] = [];
+  for (let i = 0; i < 4; i++) {
+    octaveOffsets.push({
+      x: random() * 10000,
+      y: random() * 10000
+    });
+  }
+  
   for (let y = 0; y < height; y++) {
     const row: number[] = [];
     
     for (let x = 0; x < width; x++) {
       let value = 0;
       let amplitude = 1;
-      let frequency = 0.02; // Base frequency
+      let frequency = baseFrequency;
+      let maxValue = 0;
       
-      // Multiple octaves for detail
+      // Multiple octaves for natural-looking terrain
       for (let octave = 0; octave < 4; octave++) {
-        const sampleX = x * frequency;
-        const sampleY = y * frequency;
+        const sampleX = (x + octaveOffsets[octave].x) * frequency;
+        const sampleY = (y + octaveOffsets[octave].y) * frequency;
         
-        // Simple smooth noise using sine
-        const noiseValue = (
-          Math.sin(sampleX) * Math.cos(sampleY) +
-          Math.sin(sampleX * 2.5 + random() * 0.1) * Math.cos(sampleY * 1.7) * 0.5
-        );
+        // Simple smooth noise using interpolated hash
+        const noiseValue = smoothNoise(sampleX, sampleY);
         
         value += noiseValue * amplitude;
+        maxValue += amplitude;
         
         amplitude *= 0.5;
         frequency *= 2;
       }
       
       // Normalize to 0-1
-      value = (value + 2) / 4;
+      value = (value / maxValue + 1) / 2;
       value = Math.max(0, Math.min(1, value));
       
       row.push(value);
@@ -194,99 +313,49 @@ function generateNoiseMap(width: number, height: number, random: () => number): 
 }
 
 /**
- * Convert noise value to terrain type with biome-like distribution
+ * Smooth noise function using bilinear interpolation
  */
-function noiseToTerrain(
-  noise: number, 
-  x: number, 
-  y: number, 
-  width: number, 
-  height: number
-): TerrainType {
-  // Temperature gradient (colder at top/bottom)
-  const centerY = height / 2;
-  const distanceFromEquator = Math.abs(y - centerY) / (height / 2);
-  const temperature = 1 - distanceFromEquator;
+function smoothNoise(x: number, y: number): number {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
   
-  // Moisture is primarily based on noise
-  const moisture = noise;
+  const fx = x - x0;
+  const fy = y - y0;
   
-  // Water (low noise values)
-  if (noise < 0.3) {
-    return TerrainType.WATER;
-  }
+  // Smoothstep interpolation
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
   
-  // Mountains (very high noise)
-  if (noise > 0.8) {
-    return TerrainType.MOUNTAIN;
-  }
+  // Hash function for pseudo-random values
+  const hash = (xi: number, yi: number) => {
+    const n = xi + yi * 57;
+    const h = (n * 8191) ^ (n * 251);
+    return Math.sin(h) * 0.5 + 0.5;
+  };
   
-  // Cold regions (far from equator)
-  if (temperature < 0.3) {
-    if (noise > 0.6) {
-      return TerrainType.MOUNTAIN;
-    }
-    return TerrainType.TUNDRA;
-  }
+  // Bilinear interpolation of corner values
+  const n00 = hash(x0, y0);
+  const n10 = hash(x0 + 1, y0);
+  const n01 = hash(x0, y0 + 1);
+  const n11 = hash(x0 + 1, y0 + 1);
   
-  // Hot and dry = Desert
-  if (temperature > 0.7 && moisture < 0.5) {
-    return TerrainType.DESERT;
-  }
+  const nx0 = n00 * (1 - sx) + n10 * sx;
+  const nx1 = n01 * (1 - sx) + n11 * sx;
   
-  // Moderate moisture = Forest
-  if (moisture > 0.6 && moisture < 0.75) {
-    return TerrainType.FOREST;
-  }
-  
-  // Hills (medium-high elevation)
-  if (noise > 0.65 && noise <= 0.8) {
-    return TerrainType.HILLS;
-  }
-  
-  // Swamp (low elevation, high moisture)
-  if (noise > 0.3 && noise < 0.4 && moisture > 0.6) {
-    return TerrainType.SWAMP;
-  }
-  
-  // Default to plains
-  return TerrainType.PLAINS;
+  return (nx0 * (1 - sy) + nx1 * sy) * 2 - 1;
 }
 
 /**
- * Seeded random number generator
+ * Seeded pseudo-random number generator (LCG)
  */
 function seededRandom(seed: number): () => number {
   let state = seed;
   
   return () => {
-    // Simple LCG (Linear Congruential Generator)
     state = (state * 1103515245 + 12345) & 0x7fffffff;
     return state / 0x7fffffff;
   };
 }
 
-/**
- * Create a small test map (useful for development)
- */
-export function createTestMap(): MapData {
-  // 20x15 test map with varied terrain
-  const mapString = `20 15
-..........~~~~......
-..TTT.....~~~~......
-..TTT......~~~....##
-...TT.......~.....##
-................####
-..............######
-.............@@@####
-............@@@@....
-...........@@@......
-%%........@@@.......
-%%%%.....^^^........
-%%%%....^^^^........
-%%%....^^^^^........
-%%....******........
-%.....*******........`;
-
-  return parseMapFile(mapString);
-}
+// Export terrain weights type for use in other modules
+export type { TerrainWeights as MapTerrainWeights };

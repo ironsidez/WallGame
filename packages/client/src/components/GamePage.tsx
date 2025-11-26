@@ -22,24 +22,29 @@ export function GamePage() {
 
   const { isAuthenticated, token, user } = useAuthStore()
 
-  // Initialize socket connection and join game
+  // Initialize socket connection and join game - only once when gameId is set
   useEffect(() => {
-    if (gameId && user && isAuthenticated && token) {
-      const timer = setTimeout(() => {
-        connectSocket()
-        setTimeout(() => {
-          joinGame(gameId)
-        }, 100)
-      }, 200)
+    if (!gameId || !user || !isAuthenticated || !token) return
 
-      return () => clearTimeout(timer)
+    // Connect and join game
+    connectSocket()
+    const joinTimer = setTimeout(() => {
+      joinGame(gameId)
+    }, 100)
+
+    return () => {
+      clearTimeout(joinTimer)
+      // Only cleanup when actually leaving the page (unmounting)
     }
+  }, [gameId]) // Only depend on gameId - user/token shouldn't change while on page
 
+  // Cleanup when leaving the page (separate effect)
+  useEffect(() => {
     return () => {
       leaveGame()
       disconnectSocket()
     }
-  }, [gameId, user, isAuthenticated, token])
+  }, []) // Empty deps = only runs on unmount
 
   const handleExitGame = () => {
     leaveGame()
