@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
-import { io, Socket } from 'socket.io-client'
+import { io } from 'socket.io-client'
 import { TerrainWeights } from '@wallgame/shared'
 
 interface GameRoom {
@@ -66,148 +66,81 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
   const [newGameName, setNewGameName] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS)
-  const [socket, setSocket] = useState<Socket | null>(null)
+  const [socket, setSocket] = useState<any>(null)
 
   useEffect(() => {
-    loadGames()
-    
-    // Connect to socket for real-time lobby updates
+    // Connect to socket for lobby
     const newSocket = io('http://localhost:3001', {
       auth: { token }
     })
     
-    setSocket(newSocket)
-    
-    // Listen for lobby updates - trigger a reload to get user-specific isParticipating flag
-    newSocket.on('lobby-update', () => {
-      console.log('📡 Received lobby update notification, reloading games...')
-      loadGames()
+    newSocket.on('connect', () => {
+      console.log('✅ Connected to lobby')
+      // Request games list
+      newSocket.emit('get-games')
     })
+    
+    // Listen for games list updates
+    newSocket.on('games-list', (gameList: GameRoom[]) => {
+      console.log('📡 Received games list:', gameList.length, 'games')
+      setGames(gameList)
+      setLoading(false)
+    })
+    
+    newSocket.on('game-created', (data: { gameId: string }) => {
+      console.log('✅ Game created:', data.gameId)
+      setNewGameName('')
+      setCreating(false)
+    })
+    
+    newSocket.on('error', (error: { message: string }) => {
+      console.error('❌ Socket error:', error.message)
+      alert(error.message)
+      setCreating(false)
+    })
+    
+    setSocket(newSocket)
     
     // Cleanup on unmount
     return () => {
       newSocket.close()
     }
-  }, [])
+  }, [token])
 
-  const loadGames = async () => {
-    try {
-      const response = await fetch('http://localhost:3001/api/game/active', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      })
-
-      if (response.ok) {
-        const gameList = await response.json()
-        setGames(gameList)
-      }
-    } catch (error) {
-      console.error('Failed to load games:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const createGame = async (e: React.FormEvent) => {
+  const createGame = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newGameName.trim() || creating) return
+    if (!newGameName.trim() || creating || !socket) return
 
     setCreating(true)
-    try {
-      const response = await fetch('http://localhost:3001/api/game/create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ 
-          name: newGameName.trim(),
-          settings: {
-            mapWidth: settings.mapWidth,
-            mapHeight: settings.mapHeight,
-            maxPlayers: settings.maxPlayers,
-            terrainWeights: settings.terrainWeights,
-            prodTickInterval: settings.prodTickInterval,
-            popTickInterval: settings.popTickInterval,
-            artifactReleaseTime: settings.artifactReleaseTime,
-            winConditionDuration: settings.winConditionDuration,
-            maxDuration: settings.maxDuration
-          }
-        }),
-      })
-
-      if (response.ok) {
-        const result = await response.json()
-        setNewGameName('')
-        // Reload the game list to show the new game
-        await loadGames()
-        alert(`Game "${result.game.name}" created successfully!`)
-      } else {
-        const error = await response.json()
-        alert(error.message || 'Failed to create game')
+    
+    socket.emit('create-game', { 
+      name: newGameName.trim(),
+      settings: {
+        mapWidth: settings.mapWidth,
+        mapHeight: settings.mapHeight,
+        maxPlayers: settings.maxPlayers,
+        terrainWeights: settings.terrainWeights,
+        prodTickInterval: settings.prodTickInterval,
+        popTickInterval: settings.popTickInterval,
+        artifactReleaseTime: settings.artifactReleaseTime,
+        winConditionDuration: settings.winConditionDuration,
+        maxDuration: settings.maxDuration
       }
-    } catch (error) {
-      console.error('Failed to create game:', error)
-      alert('Failed to create game')
-    } finally {
-      setCreating(false)
-    }
+    })
   }
 
-  const joinGame = async (gameId: string, isParticipating: boolean = false) => {
-    try {
-      // If already participating, just navigate to the game
-      if (isParticipating) {
-        navigate(`/game/${gameId}`)
-        return
-      }
-
-      // Otherwise, join via API first
-      const response = await fetch(`http://localhost:3001/api/game/${gameId}/join`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      })
-
-      if (response.ok) {
-        // Refresh game list to show updated player count before navigating
-        await loadGames()
-        navigate(`/game/${gameId}`)
-      } else {
-        const error = await response.json()
-        alert(error.error || 'Failed to join game')
-      }
-    } catch (error) {
-      console.error('Failed to join game:', error)
-      alert('Failed to join game')
-    }
+  const joinGame = (gameId: string) => {
+    // Navigate to game page (which will trigger join-game socket event)
+    navigate(`/game/${gameId}`)
   }
 
-  const deleteGame = async (gameId: string, gameName: string) => {
+  const deleteGame = (gameId: string, gameName: string) => {
     if (!confirm(`Are you sure you want to delete "${gameName}"?`)) {
       return
     }
 
-    try {
-      const response = await fetch(`http://localhost:3001/api/game/${gameId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      })
-
-      if (response.ok) {
-        // Refresh the game list
-        await loadGames()
-      } else {
-        const error = await response.json()
-        alert(error.error || 'Failed to delete game')
-      }
-    } catch (error) {
-      console.error('Failed to delete game:', error)
-      alert('Failed to delete game')
+    if (socket) {
+      socket.emit('delete-game', { gameId })
     }
   }
 
@@ -447,7 +380,7 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
                   </div>
                   <div className="game-actions">
                     <button
-                      onClick={() => joinGame(game.id, game.isParticipating)}
+                      onClick={() => joinGame(game.id)}
                       className="btn-primary"
                       disabled={game.status === 'finished'}
                     >

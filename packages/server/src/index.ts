@@ -17,9 +17,7 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 
 import { GameManager } from './game/GameManager';
 import { DatabaseManager } from './database/DatabaseManager';
-import { RedisManager } from './database/RedisManager';
 import { authRouter } from './routes/auth';
-import { gameRouter } from './routes/game';
 import { setupSocketHandlers } from './socket/socketHandlers';
 
 const app = express();
@@ -43,13 +41,11 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Initialize database managers (these don't connect yet, just create instances)
+// Initialize database manager (doesn't connect yet, just creates instance)
 const databaseManager = new DatabaseManager();
-const redisManager = new RedisManager();
 
 // Import route setup functions
 import { setDatabaseManager } from './routes/auth';
-import { setDatabaseManager as setGameDatabaseManager, setGameManager, setSocketIO } from './routes/game';
 
 // Note: GameManager will be initialized AFTER database connects (see startServer)
 
@@ -59,27 +55,22 @@ async function startServer() {
     // Initialize database connections (skip in development if not available)
     if (process.env.NODE_ENV !== 'development' || process.env.FORCE_DB === 'true') {
       await databaseManager.initialize();
-      await redisManager.initialize();
-      console.log('🔌 Database connections established');
+      console.log('🔌 Database connection established');
     } else {
-      console.log('⚠️  Running in development mode without databases');
-      console.log('💡 Set FORCE_DB=true to enable database connections');
+      console.log('⚠️  Running in development mode without database');
+      console.log('💡 Set FORCE_DB=true to enable database connection');
     }
     
     // Initialize GameManager after database is connected
-    const gameManager = new GameManager(redisManager, databaseManager);
+    const gameManager = new GameManager(databaseManager);
     await gameManager.initialize();
     console.log('🎮 GameManager initialized');
     
     // Set up route dependencies
     setDatabaseManager(databaseManager);
-    setGameDatabaseManager(databaseManager);
-    setGameManager(gameManager);
-    setSocketIO(io);
     
     // Routes (after all managers are ready)
     app.use('/api/auth', authRouter);
-    app.use('/api/game', gameRouter);
     
     // Setup Socket.io handlers
     setupSocketHandlers(io, gameManager, databaseManager);
@@ -102,9 +93,8 @@ process.on('SIGTERM', async () => {
   // Close socket connections
   io.close();
   
-  // Close database connections
+  // Close database connection
   await databaseManager.close();
-  await redisManager.close();
   
   process.exit(0);
 });
@@ -115,9 +105,8 @@ process.on('SIGINT', async () => {
   // Close socket connections
   io.close();
   
-  // Close database connections
+  // Close database connection
   await databaseManager.close();
-  await redisManager.close();
   
   process.exit(0);
 });

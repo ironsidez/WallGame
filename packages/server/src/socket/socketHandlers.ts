@@ -1,8 +1,9 @@
 import { Server as SocketServer } from 'socket.io';
 import { GameManager } from '../game/GameManager';
 import { DatabaseManager } from '../database/DatabaseManager';
-import { ActionType, GameState } from '@wallgame/shared';
+import { GameState } from '@wallgame/shared';
 import jwt from 'jsonwebtoken';
+import { generateRandomMap } from '../game/map-generator';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
@@ -25,159 +26,216 @@ function serializeGameState(gameState: GameState): any {
   };
 }
 
+/**
+ * Convert map data to terrain data array
+ */
+function convertTerrainToData(mapData: { terrain: string[][] }): string[][] {
+  return mapData.terrain;
+}
+
 export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, databaseManager: DatabaseManager) {
-  io.on('connection', (socket) => {
+  io.on('connection', async (socket) => {
     console.log(`🔌 Player connected: ${socket.id}`);
-    console.log(`🔍 Socket handshake auth:`, socket.handshake.auth);
     
     let currentUserId: string | null = null;
     let currentGameId: string | null = null;
 
     // Authenticate socket connection
     const token = socket.handshake.auth.token;
-    console.log(`🔍 Socket auth token received:`, token ? 'YES' : 'NO');
-    console.log(`🔍 Socket auth token value:`, token);
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'wallgame-secret') as any;
-        currentUserId = decoded.userId;
-        console.log(`🔐 Socket authenticated for user: ${currentUserId}`);
-      } catch (error) {
-        console.log('❌ Socket authentication failed:', error);
-        socket.emit('error', { message: 'Authentication failed' });
-        // Don't return - allow unauthenticated connections for now
-      }
-    } else {
+    if (!token) {
       console.log('❌ No authentication token provided');
-      // For now, allow unauthenticated connections with a placeholder user ID
-      currentUserId = `anonymous-${socket.id}`;
-      console.log(`🔄 Using placeholder user ID: ${currentUserId}`);
+      socket.disconnect();
+      return;
     }
 
-    // Join game room
-    socket.on('join-game', async (data: { gameId: string }) => {
-      if (!data) {
-        console.error('Join game: No data provided');
-        socket.emit('error', { message: 'Invalid join game request' });
-        return;
-      }
-      
-      const { gameId } = data;
-      
-      if (!currentUserId) {
-        socket.emit('error', { message: 'Not authenticated' });
-        return;
-      }
-      
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'wallgame-secret') as any;
+      currentUserId = decoded.userId;
+      console.log(`✅ User ${currentUserId} authenticated`);
+    } catch (error) {
+      console.log('❌ Socket authentication failed:', error);
+      socket.emit('error', { message: 'Authentication failed' });
+      socket.disconnect();
+      return;
+    }
+
+    // ===== LOBBY EVENTS =====
+    
+    // Get all games
+    socket.on('get-games', async () => {
       try {
-        await socket.join(gameId);
-        currentGameId = gameId;
-        
-        // Initialize or get game state
-        let gameState = await gameManager.getGameState(gameId);
-        if (!gameState) {
-          // Initialize new game state if it doesn't exist
-          await gameManager.initializeGame(gameId);
-          gameState = await gameManager.getGameState(gameId);
-        }
-        
-        // Check if player already exists in the game
-        const existingPlayer = gameState?.players.get(currentUserId);
-        
-        if (existingPlayer) {
-          // Player already in game, just mark as online
-          await gameManager.setPlayerOnlineStatus(gameId, currentUserId, true);
-          console.log(`👤 Player ${currentUserId} reconnected to game ${gameId}`);
-        } else {
-          // Player not in game yet - they need to join via REST API first
-          console.log(`⚠️ Player ${currentUserId} tried to join game ${gameId} without being a participant`);
-          socket.emit('error', { 
-            message: 'You must join this game from the lobby first',
-            code: 'NOT_A_PARTICIPANT'
-          });
+        const games = await databaseManager.getActiveGames();
+        socket.emit('games-list', games);
+      } catch (error) {
+        console.error('Get games error:', error);
+        socket.emit('error', { message: 'Failed to get games' });
+      }
+    });
+    
+    // Create game (admin only)
+    socket.on('create-game', async (data: { name: string, settings: any }) => {
+      try {
+        // Check admin
+        const user = await databaseManager.getUserById(currentUserId!);
+        if (!user.is_admin) {
+          socket.emit('error', { message: 'Admin only' });
           return;
         }
         
-        // Refresh game state after player update
-        gameState = await gameManager.getGameState(gameId);
+        const gameId = uuidv4();
+        const mapWidth = data.settings?.mapWidth || 1000;
+        const mapHeight = data.settings?.mapHeight || 2000;
         
-        if (gameState) {
-          // Serialize game state (converts Maps, includes terrainData)
-          const serializedState = serializeGameState(gameState);
-          socket.emit('game-state', serializedState);
+        console.log(`🎮 Creating game "${data.name}" (${mapWidth}x${mapHeight})`);
+        
+        // Generate map
+        const mapData = generateRandomMap(
+          mapWidth,
+          mapHeight,
+          Date.now(),
+          data.settings?.terrainWeights
+        );
+        
+        const terrainData = convertTerrainToData(mapData);
+        
+        // Save to database
+        await databaseManager.createGame(
+          gameId,
+          data.name,
+          {
+            maxPlayers: data.settings?.maxPlayers || 100,
+            mapWidth,
+            mapHeight,
+            prodTickInterval: data.settings?.prodTickInterval || 10,
+            popTickInterval: data.settings?.popTickInterval || 600,
+            artifactReleaseTime: data.settings?.artifactReleaseTime || 12,
+            winConditionDuration: data.settings?.winConditionDuration || 0.5,
+            maxDuration: data.settings?.maxDuration || null,
+            startTime: data.settings?.startTime || new Date(),
+            status: 'paused'
+          },
+          terrainData
+        );
+        
+        console.log(`✅ Game "${data.name}" created`);
+        
+        // Broadcast to all clients
+        const games = await databaseManager.getActiveGames();
+        io.emit('games-list', games);
+        
+        socket.emit('game-created', { gameId });
+      } catch (error) {
+        console.error('Create game error:', error);
+        socket.emit('error', { message: 'Failed to create game' });
+      }
+    });
+    
+    // Delete game (admin only)
+    socket.on('delete-game', async (data: { gameId: string }) => {
+      try {
+        const user = await databaseManager.getUserById(currentUserId!);
+        if (!user.is_admin) {
+          socket.emit('error', { message: 'Admin only' });
+          return;
         }
         
-        // Notify other players
+        await databaseManager.deleteGame(data.gameId);
+        await gameManager.deleteGame(data.gameId);
+        
+        console.log(`🗑️ Game ${data.gameId} deleted`);
+        
+        // Broadcast to all clients
+        const games = await databaseManager.getActiveGames();
+        io.emit('games-list', games);
+      } catch (error) {
+        console.error('Delete game error:', error);
+        socket.emit('error', { message: 'Failed to delete game' });
+      }
+    });
+    
+    // ===== GAME EVENTS =====
+    
+    // Join game
+    socket.on('join-game', async (data: { gameId: string }) => {
+      try {
+        const { gameId } = data;
+        
+        // Check not already in another game
+        const allGames = await databaseManager.getActiveGames();
+        for (const game of allGames) {
+          if (game.id === gameId) continue;
+          const participants = await databaseManager.getGamePlayers(game.id);
+          const inGame = participants.find((p: any) => p.id === currentUserId);
+          if (inGame) {
+            socket.emit('error', { 
+              message: 'You are already in another game. Leave that game first.' 
+            });
+            return;
+          }
+        }
+        
+        // Add to participants
+        await databaseManager.addPlayerToGame(gameId, currentUserId!);
+        
+        // Load game state
+        await gameManager.initializeGame(gameId);
+        const gameState = await gameManager.getGameState(gameId);
+        
+        if (!gameState) {
+          socket.emit('error', { message: 'Game not found' });
+          return;
+        }
+        
+        // Join socket room
+        await socket.join(gameId);
+        currentGameId = gameId;
+        
+        console.log(`✅ User ${currentUserId} joined game ${gameId}`);
+        
+        // Send game state
+        socket.emit('game-state', serializeGameState(gameState));
+        
+        // Notify others
         socket.to(gameId).emit('player-joined', { playerId: currentUserId });
         
-        // Send updated player list
-        const players = await gameManager.getGamePlayers(gameId);
-        io.to(gameId).emit('players-update', players);
-        
-        // Broadcast lobby update to all connected clients
+        // Update lobby
         const games = await databaseManager.getActiveGames();
-        for (const game of games) {
-          const onlineCount = await gameManager.getOnlinePlayerCount(game.id);
-          const totalCount = await gameManager.getTotalPlayerCount(game.id);
-          game.online_players = onlineCount;
-          game.total_players = totalCount;
-          game.current_players = `${onlineCount}/${totalCount}`;
-        }
-        io.emit('lobby-update', games);
+        io.emit('games-list', games);
         
       } catch (error) {
-        console.error('Error joining game:', error);
+        console.error('Join game error:', error);
         socket.emit('error', { message: 'Failed to join game' });
       }
     });
-
-    // Leave game room
-    socket.on('leave-game', async (data: { gameId: string; playerId: string }) => {
-      if (!data) {
-        console.error('Leave game: No data provided');
-        socket.emit('error', { message: 'Invalid leave game request' });
-        return;
-      }
-      
-      const { gameId, playerId } = data;
+    
+    // Leave game
+    socket.on('leave-game', async () => {
+      if (!currentGameId || !currentUserId) return;
       
       try {
-        // Mark player as offline BEFORE leaving the room (so we can still broadcast)
-        await gameManager.setPlayerOnlineStatus(gameId, playerId, false);
+        // Leave socket room
+        await socket.leave(currentGameId);
         
-        console.log(`👋 Player ${playerId} left game ${gameId} (marked offline)`);
+        console.log(`🚪 User ${currentUserId} left game ${currentGameId}`);
         
-        // Notify other players in the game room
-        socket.to(gameId).emit('player-left', { playerId });
+        // Notify others
+        socket.to(currentGameId).emit('player-left', { playerId: currentUserId });
         
-        // Send updated player list to remaining players in the game
-        const players = await gameManager.getGamePlayers(gameId);
-        io.to(gameId).emit('players-update', players);
-        
-        // Now leave the socket room
-        await socket.leave(gameId);
         currentGameId = null;
         
-        // Broadcast lobby update to all connected clients
+        // Update lobby
         const games = await databaseManager.getActiveGames();
-        for (const game of games) {
-          const onlineCount = await gameManager.getOnlinePlayerCount(game.id);
-          const totalCount = await gameManager.getTotalPlayerCount(game.id);
-          game.online_players = onlineCount;
-          game.total_players = totalCount;
-          game.current_players = `${onlineCount}/${totalCount}`;
-        }
-        io.emit('lobby-update', games);
+        io.emit('games-list', games);
+        
       } catch (error) {
-        console.error('Error leaving game:', error);
+        console.error('Leave game error:', error);
       }
     });
-
-    // Handle game actions
+    
+    // Game actions
     socket.on('game-action', async (data: { gameId: string; action: any }) => {
       if (!data) {
-        console.error('Game action: No data provided');
-        socket.emit('error', { message: 'Invalid game action request' });
+        socket.emit('error', { message: 'Invalid game action' });
         return;
       }
       
@@ -187,124 +245,43 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         const result = await gameManager.processAction(gameId, action);
         
         if (result.success) {
-          // Broadcast action to all players in the game
-          io.to(gameId).emit('action-processed', {
-            action,
-            timestamp: new Date()
-          });
-          
-          // Send updated game state (properly serialized)
           const gameState = await gameManager.getGameState(gameId);
           if (gameState) {
             io.to(gameId).emit('game-state-update', serializeGameState(gameState));
           }
         } else {
-          socket.emit('action-failed', {
-            action,
-            error: result.error
-          });
+          socket.emit('action-failed', { message: result.error });
         }
       } catch (error) {
         socket.emit('error', { message: 'Failed to process action' });
       }
     });
-
-    // Handle chat messages
-    socket.on('chat-message', async (data: { gameId: string; playerId: string; message: string }) => {
-      if (!data) {
-        console.error('Chat message: No data provided');
-        socket.emit('error', { message: 'Invalid chat message request' });
-        return;
-      }
+    
+    // Chat messages
+    socket.on('chat-message', async (data: { gameId: string; message: string }) => {
+      if (!data || !currentUserId) return;
       
-      const { gameId, playerId, message } = data;
+      const { gameId, message } = data;
       
-      try {
-        const chatAction = {
-          type: ActionType.CHAT_MESSAGE,
-          playerId,
-          timestamp: new Date(),
-          data: { message }
-        };
-        
-        // Broadcast chat message to all players in the game
-        io.to(gameId).emit('chat-message', {
-          playerId,
-          message,
-          timestamp: new Date()
-        });
-      } catch (error) {
-        socket.emit('error', { message: 'Failed to send chat message' });
-      }
-    });
-
-    // Handle structure placement preview
-    socket.on('preview-structure', (data: { gameId: string; positions: any[]; structureType: string }) => {
-      // Broadcast preview to other players for real-time feedback
-      socket.to(data.gameId).emit('structure-preview', {
-        playerId: socket.id,
-        positions: data.positions,
-        structureType: data.structureType
+      io.to(gameId).emit('chat-message', {
+        playerId: currentUserId,
+        message,
+        timestamp: new Date()
       });
     });
-
-    // Handle disconnection
+    
+    // Disconnect cleanup
     socket.on('disconnect', async () => {
-      console.log(`🔌 Player disconnected: ${socket.id}`);
+      console.log(`🔌 User ${currentUserId} disconnected`);
       
-      // If player was in a game, mark them as offline (don't remove them!)
-      if (currentUserId && currentGameId) {
-        try {
-          await gameManager.setPlayerOnlineStatus(currentGameId, currentUserId, false);
-          console.log(`👋 Player ${currentUserId} marked offline in game ${currentGameId}`);
-          
-          // Broadcast lobby update to all connected clients
-          const games = await databaseManager.getActiveGames();
-          for (const game of games) {
-            const onlineCount = await gameManager.getOnlinePlayerCount(game.id);
-            const totalCount = await gameManager.getTotalPlayerCount(game.id);
-            game.online_players = onlineCount;
-            game.total_players = totalCount;
-            game.current_players = `${onlineCount}/${totalCount}`;
-          }
-          io.emit('lobby-update', games);
-          
-          // Also update players in the game room
-          const players = await gameManager.getGamePlayers(currentGameId);
-          io.to(currentGameId).emit('players-update', players);
-        } catch (error) {
-          console.error('Error marking player offline on disconnect:', error);
-        }
-      }
-      
-      // Notify all rooms this player was in
-      socket.rooms.forEach(room => {
-        if (room !== socket.id) {
-          socket.to(room).emit('player-disconnected', { playerId: currentUserId || socket.id });
-        }
-      });
-    });
-
-    // Handle ping for latency measurement
-    socket.on('ping', (callback) => {
-      if (typeof callback === 'function') {
-        callback();
-      }
-    });
-
-    // Request game list
-    socket.on('get-active-games', async () => {
-      try {
-        const games = await gameManager.getActiveGames();
-        socket.emit('active-games', games);
-      } catch (error) {
-        socket.emit('error', { message: 'Failed to get active games' });
+      if (currentGameId && currentUserId) {
+        // Notify others in game
+        socket.to(currentGameId).emit('player-left', { playerId: currentUserId });
+        
+        // Update lobby
+        const games = await databaseManager.getActiveGames();
+        io.emit('games-list', games);
       }
     });
   });
-
-  // Handle server-side events
-  setInterval(() => {
-    io.emit('server-time', { timestamp: new Date() });
-  }, 30000); // Send time sync every 30 seconds
 }

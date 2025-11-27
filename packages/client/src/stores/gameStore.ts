@@ -96,6 +96,19 @@ export const useGameStore = create<GameStore>()(
       set({ players })
     })
 
+    newSocket.on('player-joined', (data: { playerId: string }) => {
+      console.log('👋 Player joined:', data.playerId)
+    })
+
+    newSocket.on('player-left', (data: { playerId: string }) => {
+      console.log('👋 Player left:', data.playerId)
+    })
+
+    newSocket.on('error', (error: { message: string }) => {
+      console.error('❌ Socket error:', error.message)
+      alert(error.message)
+    })
+
     newSocket.on('action-processed', (result: { success: boolean; message?: string }) => {
       if (!result.success) {
         console.error('Action failed:', result.message)
@@ -125,7 +138,7 @@ export const useGameStore = create<GameStore>()(
     }
   },
 
-  joinGame: async (gameId: string) => {
+  joinGame: (gameId: string) => {
     const { socket } = get()
     if (socket) {
       socket.emit('join-game', { gameId })
@@ -135,36 +148,13 @@ export const useGameStore = create<GameStore>()(
         selectedCity: null, 
         selectedBuilding: null 
       })
-      
-      // Also fetch players via API as backup
-      try {
-        const token = useAuthStore.getState().token
-        const response = await fetch(`http://localhost:3001/api/game/${gameId}/players`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        })
-        if (response.ok) {
-          const players = await response.json()
-          set({ players })
-        }
-      } catch (error) {
-        console.error('Failed to fetch players:', error)
-      }
     }
   },
 
   leaveGame: () => {
     const { socket, currentGameId } = get()
     if (socket && currentGameId) {
-      // Get current user ID from auth store
-      const authState = useAuthStore.getState()
-      const userId = authState.user?.id
-      
-      socket.emit('leave-game', { 
-        gameId: currentGameId, 
-        playerId: userId 
-      })
+      socket.emit('leave-game')
       
       set({ 
         currentGame: null,

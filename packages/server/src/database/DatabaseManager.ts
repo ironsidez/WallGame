@@ -190,17 +190,97 @@ export class DatabaseManager {
   }
 
   // Game management methods for lobby and session handling
-  async createGame(name: string, settings: any): Promise<any> {
+  async createGame(gameId: string, name: string, settings: any, terrainData?: any[][]): Promise<any> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
+    console.log('📝 createGame called with:');
+    console.log('   gameId:', gameId);
+    console.log('   name:', name);
+    console.log('   settings:', JSON.stringify(settings, null, 2));
+    console.log('   terrainData:', terrainData ? `${terrainData.length}x${terrainData[0]?.length}` : 'NULL');
+
     const query = `
-      INSERT INTO games (name, settings)
-      VALUES ($1, $2)
+      INSERT INTO games (
+        id,
+        name,
+        status,
+        map_width, 
+        map_height, 
+        prod_tick_interval, 
+        pop_tick_interval,
+        artifact_release_time,
+        win_condition_duration,
+        max_duration,
+        max_players,
+        start_time,
+        terrain_data
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *
     `;
     
-    const result = await this.pool.query(query, [name, JSON.stringify(settings)]);
+    const params = [
+      gameId,
+      name,
+      settings.status || 'paused',
+      settings.mapWidth,
+      settings.mapHeight,
+      settings.prodTickInterval,
+      settings.popTickInterval,
+      settings.artifactReleaseTime,
+      settings.winConditionDuration,
+      settings.maxDuration,
+      settings.maxPlayers,
+      settings.startTime,
+      terrainData ? JSON.stringify(terrainData) : null  // Convert to JSON string for JSONB column
+    ];
+
+    console.log('   Query parameters:', params.map((p, i) => `$${i+1}=${typeof p === 'object' ? JSON.stringify(p).substring(0, 50) : p}`));
+
+    const result = await this.pool.query(query, params);
     return result.rows[0];
+  }
+
+  async updateGame(gameId: string, updates: Partial<any>): Promise<any> {
+    if (!this.pool) throw new Error('Database pool not initialized');
+
+    // Build dynamic UPDATE query based on provided fields
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (updates.name !== undefined) {
+      fields.push(`name = $${paramIndex++}`);
+      values.push(updates.name);
+    }
+    if (updates.status !== undefined) {
+      fields.push(`status = $${paramIndex++}`);
+      values.push(updates.status);
+    }
+
+    if (fields.length === 0) {
+      // No updates to make
+      return await this.getGameById(gameId);
+    }
+
+    values.push(gameId); // Add gameId as last parameter
+    const query = `
+      UPDATE games
+      SET ${fields.join(', ')}
+      WHERE id = $${paramIndex}
+      RETURNING *
+    `;
+
+    const result = await this.pool.query(query, values);
+    return result.rows[0];
+  }
+
+  async getGameById(gameId: string): Promise<any | null> {
+    if (!this.pool) throw new Error('Database pool not initialized');
+
+    const query = 'SELECT * FROM games WHERE id = $1';
+    const result = await this.pool.query(query, [gameId]);
+    return result.rows[0] || null;
   }
 
   async updateGameStatus(gameId: string, status: string): Promise<void> {
@@ -213,48 +293,48 @@ export class DatabaseManager {
   async deleteGame(gameId: string): Promise<void> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
-    // Delete all associated data in a transaction
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      
-      // Delete game participants
-      await client.query('DELETE FROM game_participants WHERE game_id = $1', [gameId]);
-      
-      // Delete game history
-      await client.query('DELETE FROM game_history WHERE game_id = $1', [gameId]);
-      
-      // Delete the game itself
-      await client.query('DELETE FROM games WHERE id = $1', [gameId]);
-      
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    // With CASCADE constraints, deleting the game will automatically delete:
+    // - game_participants
+    // - grid_squares
+    // - units
+    // - city_centers
+    // - facilities
+    // - artifacts
+    // - game_history
+    const query = 'DELETE FROM games WHERE id = $1';
+    await this.pool.query(query, [gameId]);
   }
 
-  async addPlayerToGame(gameId: string, userId: string, teamId: string): Promise<void> {
+  async addPlayerToGame(gameId: string, userId: string): Promise<void> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
     const query = `
-      INSERT INTO game_participants (game_id, user_id, team_id)
-      VALUES ($1, $2, $3)
+      INSERT INTO game_participants (game_id, user_id, is_in_game)
+      VALUES ($1, $2, false)
       ON CONFLICT (game_id, user_id) DO NOTHING
     `;
     
-    await this.pool.query(query, [gameId, userId, teamId]);
+    await this.pool.query(query, [gameId, userId]);
+  }
+
+  async setPlayerInGame(gameId: string, userId: string, isInGame: boolean): Promise<void> {
+    if (!this.pool) throw new Error('Database pool not initialized');
+
+    const query = `
+      UPDATE game_participants 
+      SET is_in_game = $3
+      WHERE game_id = $1 AND user_id = $2
+    `;
+    
+    await this.pool.query(query, [gameId, userId, isInGame]);
   }
 
   async removePlayerFromGame(gameId: string, userId: string): Promise<void> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
     const query = `
-      UPDATE game_participants 
-      SET left_at = NOW()
-      WHERE game_id = $1 AND user_id = $2 AND left_at IS NULL
+      DELETE FROM game_participants 
+      WHERE game_id = $1 AND user_id = $2
     `;
     
     await this.pool.query(query, [gameId, userId]);
@@ -267,12 +347,12 @@ export class DatabaseManager {
       SELECT 
         u.id,
         u.username,
-        gp.team_id,
-        gp.joined_at,
-        gp.left_at
+        u.is_admin,
+        gp.is_in_game,
+        gp.joined_at
       FROM game_participants gp
       JOIN users u ON gp.user_id = u.id
-      WHERE gp.game_id = $1 AND gp.left_at IS NULL
+      WHERE gp.game_id = $1
       ORDER BY gp.joined_at ASC
     `;
     
@@ -284,16 +364,50 @@ export class DatabaseManager {
     if (!this.pool) throw new Error('Database pool not initialized');
 
     const query = `
-      SELECT g.*, COUNT(gp.user_id) as current_players
+      SELECT 
+        g.*,
+        COUNT(DISTINCT CASE WHEN gp.is_in_game THEN gp.user_id END) as in_game_count,
+        COUNT(DISTINCT gp.user_id) as participating_count
       FROM games g
-      LEFT JOIN game_participants gp ON g.id = gp.game_id AND gp.left_at IS NULL
-      WHERE g.status IN ('waiting', 'active')
+      LEFT JOIN game_participants gp ON g.id = gp.game_id
+      WHERE g.status IN ('paused', 'playing')
       GROUP BY g.id
       ORDER BY g.created_at DESC
     `;
     
     const result = await this.pool.query(query);
-    return result.rows;
+    
+    // Map database status to client-expected status
+    return result.rows.map(game => ({
+      ...game,
+      status: game.status === 'paused' ? 'waiting' : game.status
+    }));
+  }
+
+  /**
+   * Save terrain data for a game
+   */
+  async saveTerrainData(gameId: string, terrainData: any[][]): Promise<void> {
+    if (!this.pool) throw new Error('Database pool not initialized');
+
+    const query = 'UPDATE games SET terrain_data = $1 WHERE id = $2';
+    await this.pool.query(query, [JSON.stringify(terrainData), gameId]);
+  }
+
+  /**
+   * Get terrain data for a game
+   */
+  async getTerrainData(gameId: string): Promise<any[][] | null> {
+    if (!this.pool) throw new Error('Database pool not initialized');
+
+    const query = 'SELECT terrain_data FROM games WHERE id = $1';
+    const result = await this.pool.query(query, [gameId]);
+    
+    if (result.rows.length === 0 || !result.rows[0].terrain_data) {
+      return null;
+    }
+    
+    return result.rows[0].terrain_data;
   }
 
   // Game persistence methods for state management

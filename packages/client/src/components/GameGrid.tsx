@@ -27,7 +27,7 @@ export function GameGrid() {
   const gridSquares: Record<string, any> = currentGame?.grid?.squares || {}
   
   // Get compact terrain data (2D array) for efficient terrain lookup
-  const terrainData: number[][] | undefined = (currentGame as any)?.terrainData
+  const terrainData: TerrainType[][] | undefined = (currentGame as any)?.terrainData
   
   // Debug logging for terrainData
   useEffect(() => {
@@ -85,7 +85,7 @@ export function GameGrid() {
   useEffect(() => {
     if (terrainData && terrainData.length > 0) {
       // Count terrain types
-      const counts: Record<number, number> = {};
+      const counts: Record<string, number> = {};
       for (let y = 0; y < Math.min(terrainData.length, 100); y++) {
         for (let x = 0; x < Math.min(terrainData[y]?.length || 0, 100); x++) {
           const t = terrainData[y][x];
@@ -256,6 +256,8 @@ export function GameGrid() {
           viewport={viewport} 
           mapWidth={mapWidth} 
           mapHeight={mapHeight}
+          terrainData={terrainData}
+          getTerrainColor={getTerrainColor}
           onNavigate={handleMinimapNavigate}
         />
       </div>
@@ -275,12 +277,32 @@ interface MinimapProps {
   viewport: { x: number; y: number; width: number; height: number }
   mapWidth: number
   mapHeight: number
+  terrainData?: any[][]
+  getTerrainColor: (terrain: TerrainType) => string
   onNavigate: (x: number, y: number) => void
 }
 
-function Minimap({ viewport, mapWidth, mapHeight, onNavigate }: MinimapProps) {
+function Minimap({ viewport, mapWidth, mapHeight, terrainData, getTerrainColor, onNavigate }: MinimapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const MINIMAP_SIZE = 150
+  const [isDragging, setIsDragging] = useState(false)
+  
+  // Calculate minimap dimensions based on map aspect ratio
+  const BASE_SIZE = 200 // Target size for the larger dimension
+  const MIN_SIZE = 100  // Minimum size for smaller dimension
+  
+  const aspectRatio = mapWidth / mapHeight
+  let minimapWidth: number
+  let minimapHeight: number
+  
+  if (aspectRatio > 1) {
+    // Wider than tall
+    minimapWidth = BASE_SIZE
+    minimapHeight = Math.max(MIN_SIZE, BASE_SIZE / aspectRatio)
+  } else {
+    // Taller than wide
+    minimapHeight = BASE_SIZE
+    minimapWidth = Math.max(MIN_SIZE, BASE_SIZE * aspectRatio)
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -290,50 +312,101 @@ function Minimap({ viewport, mapWidth, mapHeight, onNavigate }: MinimapProps) {
     if (!ctx) return
 
     // Calculate scale
-    const scale = MINIMAP_SIZE / Math.max(mapWidth, mapHeight)
-    const scaledWidth = mapWidth * scale
-    const scaledHeight = mapHeight * scale
+    const scaleX = minimapWidth / mapWidth
+    const scaleY = minimapHeight / mapHeight
 
-    // Clear and draw background
+    // Clear background
     ctx.fillStyle = '#1a1a2e'
-    ctx.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE)
+    ctx.fillRect(0, 0, minimapWidth, minimapHeight)
 
-    // Draw simplified terrain (just a colored rectangle for now)
-    ctx.fillStyle = '#3d5a3d'
-    ctx.fillRect(0, 0, scaledWidth, scaledHeight)
+    // Draw terrain if available
+    if (terrainData && terrainData.length > 0) {
+      // Sample terrain at intervals for performance
+      const sampleRate = Math.max(1, Math.floor(Math.max(mapWidth, mapHeight) / 200))
+      
+      const maxY = Math.min(mapHeight, terrainData.length)
+      const maxX = terrainData[0] ? Math.min(mapWidth, terrainData[0].length) : 0
+      
+      for (let y = 0; y < maxY; y += sampleRate) {
+        for (let x = 0; x < maxX; x += sampleRate) {
+          if (terrainData[y] && terrainData[y][x] !== undefined) {
+            const terrain = terrainData[y][x] as TerrainType
+            ctx.fillStyle = getTerrainColor(terrain)
+            ctx.fillRect(
+              x * scaleX, 
+              y * scaleY, 
+              Math.max(1, sampleRate * scaleX), 
+              Math.max(1, sampleRate * scaleY)
+            )
+          }
+        }
+      }
+    } else {
+      // Fallback: draw simplified terrain rectangle
+      ctx.fillStyle = '#3d5a3d'
+      ctx.fillRect(0, 0, minimapWidth, minimapHeight)
+    }
 
     // Draw viewport rectangle
-    const vpX = viewport.x * scale
-    const vpY = viewport.y * scale
-    const vpWidth = viewport.width * scale
-    const vpHeight = viewport.height * scale
+    const vpX = viewport.x * scaleX
+    const vpY = viewport.y * scaleY
+    const vpWidth = viewport.width * scaleX
+    const vpHeight = viewport.height * scaleY
 
     ctx.strokeStyle = '#ffffff'
     ctx.lineWidth = 2
     ctx.strokeRect(vpX, vpY, vpWidth, vpHeight)
 
-  }, [viewport, mapWidth, mapHeight])
+    // Semi-transparent fill for viewport
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)'
+    ctx.fillRect(vpX, vpY, vpWidth, vpHeight)
 
-  const handleClick = (e: React.MouseEvent) => {
+  }, [viewport, mapWidth, mapHeight, terrainData, getTerrainColor, minimapWidth, minimapHeight])
+
+  const handleMouseEvent = (e: React.MouseEvent) => {
     const canvas = canvasRef.current
     if (!canvas) return
 
     const rect = canvas.getBoundingClientRect()
-    const scale = MINIMAP_SIZE / Math.max(mapWidth, mapHeight)
+    const scaleX = minimapWidth / mapWidth
+    const scaleY = minimapHeight / mapHeight
     
-    const x = (e.clientX - rect.left) / scale
-    const y = (e.clientY - rect.top) / scale
+    const x = (e.clientX - rect.left) / scaleX
+    const y = (e.clientY - rect.top) / scaleY
     
     onNavigate(x, y)
+  }
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true)
+    handleMouseEvent(e)
+  }
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging) {
+      handleMouseEvent(e)
+    }
+  }
+
+  const handleMouseUp = () => {
+    setIsDragging(false)
+  }
+
+  const handleMouseLeave = () => {
+    setIsDragging(false)
   }
 
   return (
     <canvas
       ref={canvasRef}
-      width={MINIMAP_SIZE}
-      height={MINIMAP_SIZE}
+      width={minimapWidth}
+      height={minimapHeight}
       className="minimap-canvas"
-      onClick={handleClick}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseLeave}
+      style={{ cursor: isDragging ? 'grabbing' : 'pointer' }}
     />
   )
 }
