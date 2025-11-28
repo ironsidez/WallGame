@@ -64,16 +64,3 @@ export function maskSensitiveData(obj: any): any {
   
   return masked;
 }
-
-/**
- * Console.log replacement that automatically masks sensitive data
- * @param message - Log message
- * @param data - Data to log (will be masked)
- */
-export function secureLog(message: string, data?: any): void {
-  if (data) {
-    console.log(message, maskSensitiveData(data));
-  } else {
-    console.log(message);
-  }
-}

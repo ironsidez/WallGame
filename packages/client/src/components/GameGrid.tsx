@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { useGameStore } from '../stores'
-import { TerrainType } from '@wallgame/shared'
+import { TerrainType, clientLogger } from '@wallgame/shared'
 
 const TILE_SIZE = 32
 const VIEWPORT_PADDING = 2 // tiles of padding around viewport
@@ -31,7 +31,7 @@ export function GameGrid() {
   
   // Debug logging for terrainData
   useEffect(() => {
-    console.log('🗺️ GameGrid terrainData changed:', {
+    clientLogger.debug('🗺️ GameGrid terrainData changed:', {
       hasTerrainData: !!terrainData,
       rows: terrainData?.length || 0,
       cols: terrainData?.[0]?.length || 0,
@@ -92,14 +92,14 @@ export function GameGrid() {
           counts[t] = (counts[t] || 0) + 1;
         }
       }
-      console.log('🗺️ TerrainData received:', {
+      clientLogger.debug('🗺️ TerrainData received:', {
         rows: terrainData.length,
         cols: terrainData[0]?.length,
         sample: terrainData[0]?.slice(0, 10),
         distribution: counts
       });
     } else {
-      console.log('🗺️ No terrainData available');
+      clientLogger.warn('🗺️ No terrainData available');
     }
   }, [terrainData]);
 

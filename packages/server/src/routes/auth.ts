@@ -1,8 +1,9 @@
 import express from 'express';
 import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
 import { DatabaseManager } from '../database/DatabaseManager';
-import { secureLog, maskJwtToken } from '../utils/security';
+import { maskJwtToken } from '../utils/security';
+import { generateJWT, verifyJWT } from '../utils/jwt';
+import { serverLogger } from '@wallgame/shared';
 
 const router = express.Router();
 
@@ -40,15 +41,7 @@ router.post('/register', async (req: any, res: any) => {
     const user = await databaseManager.createUser(username, email, passwordHash);
 
     // Generate JWT token
-    const jwtSecret = process.env.JWT_SECRET;
-    if (!jwtSecret) {
-      throw new Error('JWT_SECRET environment variable is required');
-    }
-    const token = jwt.sign(
-      { userId: user.id, username: user.username },
-      jwtSecret,
-      { expiresIn: '24h' }
-    );
+    const token = generateJWT(user.id, user.username);
 
     res.status(201).json({
       message: 'User created successfully',
@@ -61,13 +54,13 @@ router.post('/register', async (req: any, res: any) => {
       token
     });
 
-    secureLog('User registered successfully:', { 
+    serverLogger.info('User registered successfully:', { 
       userId: user.id, 
       username: user.username,
       token: maskJwtToken(token)
     });
   } catch (error: any) {
-    secureLog('Registration error:', error);
+    serverLogger.error('Registration error:', error);
     const errorMessage = error?.message || 'Internal server error';
     res.status(500).json({ 
       error: 'Registration failed', 
@@ -85,34 +78,26 @@ router.post('/login', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Missing username or password' });
     }
 
-    console.log(`🔐 Login attempt for username: ${username}`);
+    serverLogger.info(`🔐 Login attempt for username: ${username}`);
 
     // Get user from database
     const user = await databaseManager.getUserByUsername(username);
     if (!user) {
-      console.log(`❌ Login failed: User "${username}" not found in database`);
+      serverLogger.warn(`❌ Login failed: User "${username}" not found in database`);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    console.log(`✅ User found: ${user.username} (id: ${user.id})`);
+    serverLogger.info(`✅ User found: ${user.username} (id: ${user.id})`);
 
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     if (!isPasswordValid) {
-      console.log(`❌ Login failed: Invalid password for user "${username}"`);
+      serverLogger.warn(`❌ Login failed: Invalid password for user "${username}"`);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     // Generate JWT token
-    const jwtSecret = process.env.JWT_SECRET;
-    if (!jwtSecret) {
-      throw new Error('JWT_SECRET environment variable is required');
-    }
-    const token = jwt.sign(
-      { userId: user.id, username: user.username },
-      jwtSecret,
-      { expiresIn: '24h' }
-    );
+    const token = generateJWT(user.id, user.username);
 
     res.json({
       message: 'Login successful',
@@ -125,13 +110,13 @@ router.post('/login', async (req: any, res: any) => {
       token
     });
 
-    secureLog('User logged in successfully:', { 
+    serverLogger.info('User logged in successfully:', { 
       userId: user.id, 
       username: user.username,
       token: maskJwtToken(token)
     });
   } catch (error) {
-    secureLog('Login error:', error);
+    serverLogger.error('Login error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -145,49 +130,9 @@ export function authenticateToken(req: any, res: any, next: any) {
     return res.status(401).json({ error: 'Access token required' });
   }
 
-  const jwtSecret = process.env.JWT_SECRET;
-  if (!jwtSecret) {
-    return res.status(500).json({ error: 'Server configuration error' });
-  }
-
-  jwt.verify(token, jwtSecret, (err: any, user: any) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
-    }
-    req.user = user;
-    next();
-  });
-}
-
-// Admin authentication middleware
-export async function authenticateAdmin(req: any, res: any, next: any) {
-  // First authenticate the token
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
-
-  const jwtSecret = process.env.JWT_SECRET;
-  if (!jwtSecret) {
-    return res.status(500).json({ error: 'Server configuration error' });
-  }
-
   try {
-    const decoded: any = jwt.verify(token, jwtSecret);
+    const decoded = verifyJWT(token);
     req.user = decoded;
-
-    // Check if user is admin
-    const user = await databaseManager.getUserById(decoded.userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    if (!user.is_admin) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-
     next();
   } catch (err) {
     return res.status(403).json({ error: 'Invalid or expired token' });
@@ -210,7 +155,7 @@ router.get('/profile', authenticateToken, async (req: any, res: any) => {
       createdAt: user.created_at
     });
   } catch (error) {
-    secureLog('Profile error:', error);
+    serverLogger.error('Profile error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -1,9 +1,7 @@
 import { 
   GameState, 
   Player, 
-  GameAction, 
   Position,
-  ActionType,
   positionToKey,
   GamePhase,
   GameSettings,
@@ -40,7 +38,7 @@ export class GameManager {
       console.log(`📋 Loading ${activeGames.length} active games from database...`);
       
       for (const dbGame of activeGames) {
-        // Try to load from Redis first
+        // Try to load game state from memory
         let gameState = await this.loadGameState(dbGame.id);
         
         // Check if loaded game has terrain data - regenerate if missing
@@ -71,7 +69,7 @@ export class GameManager {
           }
         }
         
-        // If not in Redis, create a new game state
+        // If not in memory, create a new game state
         if (!gameState) {
           console.log(`🎮 Creating new game state for ${dbGame.name} (${dbGame.id})`);
           const settings = typeof dbGame.settings === 'string' 
@@ -141,11 +139,10 @@ export class GameManager {
             const player = {
               id: dbPlayer.id,
               username: dbPlayer.username,
-              color: '#' + Math.floor(Math.random()*16777215).toString(16), // Generate random color
+              isAdmin: false,
               isOnline: false, // Will be set to true when they connect via socket
-              lastSeen: new Date(dbPlayer.joined_at),
-              cityIds: [],
-              unitIds: []
+              currentGameId: dbGame.id,
+              participatingGameIds: [dbGame.id]
             };
             gameState.players.set(player.id, player);
           }
@@ -177,7 +174,7 @@ export class GameManager {
     
     const gameState: GameState = {
       id: gameId,
-      name: settings.name || `Game ${gameId.substring(0, 8)}`,
+      name: `Game ${gameId.substring(0, 8)}`,
       players: new Map(),
       cities: new Map(),
       buildings: new Map(),
@@ -187,7 +184,7 @@ export class GameManager {
         height: settings.mapHeight || 2000,
         squares: new Map() // Only populated for squares with entities/resources
       },
-      terrainData: this.convertTerrainToData(mapData), // ✅ Store map here
+      terrainData: mapData ? this.convertTerrainToData(mapData) : [], // ✅ Store map here
       gamePhase: GamePhase.WAITING,
       currentTick: 0,
       lastPopulationTick: 0,
@@ -436,7 +433,7 @@ export class GameManager {
     let gameState = this.gameStates.get(gameId);
     
     if (!gameState) {
-      // Try Redis
+      // Try loading from database
       const loadedState = await this.loadGameState(gameId);
       if (loadedState) {
         gameState = loadedState;
@@ -507,7 +504,6 @@ export class GameManager {
     if (!player) return false;
 
     player.isOnline = isOnline;
-    player.lastSeen = new Date();
     await this.saveGameState(gameState);
     
     return true;
@@ -558,7 +554,7 @@ export class GameManager {
           maxPlayers: dbGame.max_players,
           mapWidth: dbGame.map_width,
           mapHeight: dbGame.map_height,
-          mapSource: 'database',
+          mapSource: 'custom',
           tickLengthMs: 1000,
           ticksPerPopulationUpdate: dbGame.prod_tick_interval,
           cityBuildZoneRadius: 10,
@@ -618,48 +614,6 @@ export class GameManager {
     if (!gameState) return 0;
 
     return gameState.players.size;
-  }
-
-  /**
-   * Processes a game action (RTS actions)
-   */
-  async processAction(gameId: string, action: GameAction): Promise<{ success: boolean; error?: string }> {
-    const gameState = await this.getGameState(gameId);
-    if (!gameState) {
-      return { success: false, error: 'Game not found' };
-    }
-
-    try {
-      switch (action.type) {
-        case ActionType.MOVE_UNIT:
-          // TODO: Implement unit movement
-          break;
-        case ActionType.CREATE_CITY:
-          // TODO: Implement city creation from settler
-          break;
-        case ActionType.CONSTRUCT_BUILDING:
-          // TODO: Implement building construction
-          break;
-        case ActionType.TRAIN_UNIT:
-          // TODO: Implement unit training
-          break;
-        case ActionType.ATTACK:
-          // TODO: Implement combat
-          break;
-        case ActionType.CHAT_MESSAGE:
-          // Chat handled separately via socket
-          break;
-        default:
-          return { success: false, error: 'Unsupported action type' };
-      }
-
-      gameState.lastUpdate = new Date();
-      await this.saveGameState(gameState);
-      
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-    }
   }
 
   /**

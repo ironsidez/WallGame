@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from 'pg';
+import { dbLogger } from '@wallgame/shared';
 
 export interface DatabaseConfig {
   host: string;
@@ -21,12 +22,12 @@ export class DatabaseManager {
     };
 
     // Debug logging to see what values are being used
-    console.log('🔍 Database configuration:');
-    console.log(`  Host: ${config.host}`);
-    console.log(`  Port: ${config.port}`);
-    console.log(`  Database: ${config.database}`);
-    console.log(`  User: ${config.user}`);
-    console.log(`  Password: ${config.password ? '[SET]' : '[NOT SET]'}`);
+    dbLogger.debug('🔍 Database configuration:');
+    dbLogger.debug(`  Host: ${config.host}`);
+    dbLogger.debug(`  Port: ${config.port}`);
+    dbLogger.debug(`  Database: ${config.database}`);
+    dbLogger.debug(`  User: ${config.user}`);
+    dbLogger.debug(`  Password: ${config.password ? '[SET]' : '[NOT SET]'}`);
 
     this.pool = new Pool(config);
 
@@ -34,12 +35,12 @@ export class DatabaseManager {
     try {
       const client = await this.pool.connect();
       client.release();
-      console.log('✅ Connected to PostgreSQL');
+      dbLogger.info('✅ Connected to PostgreSQL');
       
       // Initialize database schema
       await this.initializeSchema();
     } catch (error) {
-      console.error('❌ Failed to connect to PostgreSQL:', error);
+      dbLogger.error('❌ Failed to connect to PostgreSQL:', error);
       throw error;
     }
   }
@@ -48,7 +49,7 @@ export class DatabaseManager {
     if (this.pool) {
       await this.pool.end();
       this.pool = null;
-      console.log('📴 PostgreSQL connection pool closed');
+      dbLogger.info('📴 PostgreSQL connection pool closed');
     }
   }
 
@@ -65,10 +66,10 @@ export class DatabaseManager {
       const result = await client.query('SELECT NOW() as current_time');
       client.release();
       
-      console.log('✅ Database connection test successful:', result.rows[0].current_time);
+      dbLogger.info('✅ Database connection test successful:', result.rows[0].current_time);
       return true;
     } catch (error) {
-      console.error('❌ Database connection test failed:', error);
+      dbLogger.error('❌ Database connection test failed:', error);
       return false;
     }
   }
@@ -149,12 +150,12 @@ export class DatabaseManager {
       try {
         await this.pool.query(query);
       } catch (error) {
-        console.error('Error executing schema query:', query, error);
+        dbLogger.error('Error executing schema query:', { query, error });
         throw error;
       }
     }
 
-    console.log('✅ Database schema initialized');
+    dbLogger.info('✅ Database schema initialized');
   }
 
   // User management methods for authentication system
@@ -193,11 +194,12 @@ export class DatabaseManager {
   async createGame(gameId: string, name: string, settings: any, terrainData?: any[][]): Promise<any> {
     if (!this.pool) throw new Error('Database pool not initialized');
 
-    console.log('📝 createGame called with:');
-    console.log('   gameId:', gameId);
-    console.log('   name:', name);
-    console.log('   settings:', JSON.stringify(settings, null, 2));
-    console.log('   terrainData:', terrainData ? `${terrainData.length}x${terrainData[0]?.length}` : 'NULL');
+    dbLogger.debug('📝 createGame called with:', {
+      gameId,
+      name,
+      settings,
+      terrainData: terrainData ? `${terrainData.length}x${terrainData[0]?.length}` : 'NULL'
+    });
 
     const query = `
       INSERT INTO games (
@@ -235,7 +237,11 @@ export class DatabaseManager {
       terrainData ? JSON.stringify(terrainData) : null  // Convert to JSON string for JSONB column
     ];
 
-    console.log('   Query parameters:', params.map((p, i) => `$${i+1}=${typeof p === 'object' ? JSON.stringify(p).substring(0, 50) : p}`));
+    dbLogger.debug('Query parameters:', params.map((p, i) => ({
+      param: `$${i+1}`,
+      type: typeof p,
+      value: typeof p === 'object' ? JSON.stringify(p).substring(0, 50) + '...' : p
+    })));
 
     const result = await this.pool.query(query, params);
     return result.rows[0];
@@ -408,67 +414,5 @@ export class DatabaseManager {
     }
     
     return result.rows[0].terrain_data;
-  }
-
-  // Game persistence methods for state management
-  async saveGameHistory(gameId: string, finalState: any, winnerTeamId?: string): Promise<void> {
-    if (!this.pool) throw new Error('Database pool not initialized');
-
-    const query = `
-      INSERT INTO game_history (game_id, final_state, winner_team_id, total_structures)
-      VALUES ($1, $2, $3, $4)
-    `;
-    
-    const totalStructures = finalState.structures ? Object.keys(finalState.structures).length : 0;
-    
-    await this.pool.query(query, [
-      gameId,
-      JSON.stringify(finalState),
-      winnerTeamId || null,
-      totalStructures
-    ]);
-
-    // Update game status to ended
-    await this.updateGameStatus(gameId, 'ended');
-  }
-
-  // Player statistics methods for rankings and achievements
-  async updatePlayerStats(userId: string, stats: any): Promise<void> {
-    if (!this.pool) throw new Error('Database pool not initialized');
-
-    const query = `
-      INSERT INTO player_stats (
-        user_id, games_played, games_won, total_structures_built,
-        total_structures_captured, total_resources_earned, best_game_score
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (user_id) DO UPDATE SET
-        games_played = player_stats.games_played + $2,
-        games_won = player_stats.games_won + $3,
-        total_structures_built = player_stats.total_structures_built + $4,
-        total_structures_captured = player_stats.total_structures_captured + $5,
-        total_resources_earned = player_stats.total_resources_earned + $6,
-        best_game_score = GREATEST(player_stats.best_game_score, $7),
-        updated_at = NOW()
-      `;
-    
-    await this.pool.query(query, [
-      userId,
-      stats.gamesPlayed || 0,
-      stats.gamesWon || 0,
-      stats.structuresBuilt || 0,
-      stats.structuresCaptured || 0,
-      stats.resourcesEarned || 0,
-      stats.gameScore || 0
-    ]);
-  }
-
-  async getPlayerStats(userId: string): Promise<any | null> {
-    if (!this.pool) throw new Error('Database pool not initialized');
-
-    const query = 'SELECT * FROM player_stats WHERE user_id = $1';
-    const result = await this.pool.query(query, [userId]);
-    
-    return result.rows[0] || null;
   }
 }

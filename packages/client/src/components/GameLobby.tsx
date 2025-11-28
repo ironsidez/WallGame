@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import { io } from 'socket.io-client'
-import { TerrainWeights } from '@wallgame/shared'
+import { TerrainWeights, clientLogger } from '@wallgame/shared'
 
 interface GameRoom {
   id: string
@@ -75,26 +75,26 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
     })
     
     newSocket.on('connect', () => {
-      console.log('✅ Connected to lobby')
+      clientLogger.info('✅ Connected to lobby')
       // Request games list
       newSocket.emit('get-games')
     })
     
     // Listen for games list updates
     newSocket.on('games-list', (gameList: GameRoom[]) => {
-      console.log('📡 Received games list:', gameList.length, 'games')
+      clientLogger.info('📡 Received games list:', gameList.length, 'games')
       setGames(gameList)
       setLoading(false)
     })
     
     newSocket.on('game-created', (data: { gameId: string }) => {
-      console.log('✅ Game created:', data.gameId)
+      clientLogger.info('✅ Game created:', data.gameId)
       setNewGameName('')
       setCreating(false)
     })
     
     newSocket.on('error', (error: { message: string }) => {
-      console.error('❌ Socket error:', error.message)
+      clientLogger.error('❌ Socket error:', error.message)
       alert(error.message)
       setCreating(false)
     })

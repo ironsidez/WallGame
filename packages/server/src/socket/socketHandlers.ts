@@ -1,7 +1,7 @@
 import { Server as SocketServer } from 'socket.io';
 import { GameManager } from '../game/GameManager';
 import { DatabaseManager } from '../database/DatabaseManager';
-import { GameState } from '@wallgame/shared';
+import { GameState, serverLogger } from '@wallgame/shared';
 import jwt from 'jsonwebtoken';
 import { generateRandomMap } from '../game/map-generator';
 import { v4 as uuidv4 } from 'uuid';
@@ -35,7 +35,7 @@ function convertTerrainToData(mapData: { terrain: string[][] }): string[][] {
 
 export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, databaseManager: DatabaseManager) {
   io.on('connection', async (socket) => {
-    console.log(`🔌 Player connected: ${socket.id}`);
+    serverLogger.info(`🔌 Player connected: ${socket.id}`);
     
     let currentUserId: string | null = null;
     let currentGameId: string | null = null;
@@ -43,7 +43,7 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
     // Authenticate socket connection
     const token = socket.handshake.auth.token;
     if (!token) {
-      console.log('❌ No authentication token provided');
+      serverLogger.warn('❌ No authentication token provided');
       socket.disconnect();
       return;
     }
@@ -51,9 +51,9 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'wallgame-secret') as any;
       currentUserId = decoded.userId;
-      console.log(`✅ User ${currentUserId} authenticated`);
+      serverLogger.info(`✅ User ${currentUserId} authenticated`);
     } catch (error) {
-      console.log('❌ Socket authentication failed:', error);
+      serverLogger.error('❌ Socket authentication failed:', error);
       socket.emit('error', { message: 'Authentication failed' });
       socket.disconnect();
       return;
@@ -67,7 +67,7 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         const games = await databaseManager.getActiveGames();
         socket.emit('games-list', games);
       } catch (error) {
-        console.error('Get games error:', error);
+        serverLogger.error('Get games error:', error);
         socket.emit('error', { message: 'Failed to get games' });
       }
     });
@@ -86,7 +86,7 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         const mapWidth = data.settings?.mapWidth || 1000;
         const mapHeight = data.settings?.mapHeight || 2000;
         
-        console.log(`🎮 Creating game "${data.name}" (${mapWidth}x${mapHeight})`);
+        serverLogger.info(`🎮 Creating game "${data.name}" (${mapWidth}x${mapHeight})`);
         
         // Generate map
         const mapData = generateRandomMap(
@@ -117,7 +117,7 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
           terrainData
         );
         
-        console.log(`✅ Game "${data.name}" created`);
+        serverLogger.info(`✅ Game "${data.name}" created`);
         
         // Broadcast to all clients
         const games = await databaseManager.getActiveGames();
@@ -125,7 +125,7 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         
         socket.emit('game-created', { gameId });
       } catch (error) {
-        console.error('Create game error:', error);
+        serverLogger.error('Create game error:', error);
         socket.emit('error', { message: 'Failed to create game' });
       }
     });
@@ -142,13 +142,13 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         await databaseManager.deleteGame(data.gameId);
         await gameManager.deleteGame(data.gameId);
         
-        console.log(`🗑️ Game ${data.gameId} deleted`);
+        serverLogger.info(`🗑️ Game ${data.gameId} deleted`);
         
         // Broadcast to all clients
         const games = await databaseManager.getActiveGames();
         io.emit('games-list', games);
       } catch (error) {
-        console.error('Delete game error:', error);
+        serverLogger.error('Delete game error:', error);
         socket.emit('error', { message: 'Failed to delete game' });
       }
     });
@@ -190,7 +190,7 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         await socket.join(gameId);
         currentGameId = gameId;
         
-        console.log(`✅ User ${currentUserId} joined game ${gameId}`);
+        serverLogger.info(`✅ User ${currentUserId} joined game ${gameId}`);
         
         // Send game state
         socket.emit('game-state', serializeGameState(gameState));
@@ -203,7 +203,7 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         io.emit('games-list', games);
         
       } catch (error) {
-        console.error('Join game error:', error);
+        serverLogger.error('Join game error:', error);
         socket.emit('error', { message: 'Failed to join game' });
       }
     });
@@ -216,7 +216,7 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         // Leave socket room
         await socket.leave(currentGameId);
         
-        console.log(`🚪 User ${currentUserId} left game ${currentGameId}`);
+        serverLogger.info(`🚪 User ${currentUserId} left game ${currentGameId}`);
         
         // Notify others
         socket.to(currentGameId).emit('player-left', { playerId: currentUserId });
@@ -228,51 +228,13 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         io.emit('games-list', games);
         
       } catch (error) {
-        console.error('Leave game error:', error);
+        serverLogger.error('Leave game error:', error);
       }
-    });
-    
-    // Game actions
-    socket.on('game-action', async (data: { gameId: string; action: any }) => {
-      if (!data) {
-        socket.emit('error', { message: 'Invalid game action' });
-        return;
-      }
-      
-      const { gameId, action } = data;
-      
-      try {
-        const result = await gameManager.processAction(gameId, action);
-        
-        if (result.success) {
-          const gameState = await gameManager.getGameState(gameId);
-          if (gameState) {
-            io.to(gameId).emit('game-state-update', serializeGameState(gameState));
-          }
-        } else {
-          socket.emit('action-failed', { message: result.error });
-        }
-      } catch (error) {
-        socket.emit('error', { message: 'Failed to process action' });
-      }
-    });
-    
-    // Chat messages
-    socket.on('chat-message', async (data: { gameId: string; message: string }) => {
-      if (!data || !currentUserId) return;
-      
-      const { gameId, message } = data;
-      
-      io.to(gameId).emit('chat-message', {
-        playerId: currentUserId,
-        message,
-        timestamp: new Date()
-      });
     });
     
     // Disconnect cleanup
     socket.on('disconnect', async () => {
-      console.log(`🔌 User ${currentUserId} disconnected`);
+      serverLogger.info(`🔌 User ${currentUserId} disconnected`);
       
       if (currentGameId && currentUserId) {
         // Notify others in game

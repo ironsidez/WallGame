@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { io, Socket } from 'socket.io-client'
-import { GameState, Player } from '@wallgame/shared'
+import { GameState, Player, clientLogger } from '@wallgame/shared'
 import { useAuthStore } from './authStore'
 
 interface GameStore {
@@ -50,13 +50,13 @@ export const useGameStore = create<GameStore>()(
 
     // Get the token from the auth store
     const token = useAuthStore.getState().token
-    console.log('🔍 Token from authStore:', token ? 'FOUND' : 'NOT FOUND')
+    clientLogger.debug('🔍 Token from authStore:', token ? 'FOUND' : 'NOT FOUND')
     
     if (token) {
-      console.log('🔍 Token preview:', token.substring(0, 50) + '...')
+      clientLogger.debug('🔍 Token preview:', token.substring(0, 50) + '...')
     }
 
-    console.log('🔍 Final token for socket:', token ? 'YES' : 'NO')
+    clientLogger.debug('🔍 Final token for socket:', token ? 'YES' : 'NO')
 
     const newSocket = io('http://localhost:3001', {
       auth: {
@@ -65,30 +65,30 @@ export const useGameStore = create<GameStore>()(
     })
 
     newSocket.on('connect', () => {
-      console.log('Connected to game server')
+      clientLogger.info('Connected to game server')
       set({ connected: true })
     })
 
     newSocket.on('disconnect', () => {
-      console.log('Disconnected from game server')
+      clientLogger.info('Disconnected from game server')
       set({ connected: false })
     })
 
     newSocket.on('game-state', (gameState: GameState) => {
       const terrainRows = (gameState as any)?.terrainData?.length || 'NONE';
       const terrainCols = terrainRows !== 'NONE' ? (gameState as any)?.terrainData[0]?.length || 0 : 0;
-      console.log('📥 game-state received');
-      console.log('   terrainData:', terrainRows, 'x', terrainCols);
-      console.log('   full gameState keys:', Object.keys(gameState));
-      console.log('   terrainData sample [0][0]:', (gameState as any)?.terrainData?.[0]?.[0]);
+      clientLogger.debug('📥 game-state received');
+      clientLogger.debug('   terrainData:', terrainRows, 'x', terrainCols);
+      clientLogger.debug('   full gameState keys:', Object.keys(gameState));
+      clientLogger.debug('   terrainData sample [0][0]:', (gameState as any)?.terrainData?.[0]?.[0]);
       set({ currentGame: gameState })
     })
 
     newSocket.on('game-state-update', (gameState: GameState) => {
       const terrainRows = (gameState as any)?.terrainData?.length || 'NONE';
       const terrainCols = terrainRows !== 'NONE' ? (gameState as any)?.terrainData[0]?.length || 0 : 0;
-      console.log('📥 game-state-update received');
-      console.log('   terrainData:', terrainRows, 'x', terrainCols);
+      clientLogger.debug('📥 game-state-update received');
+      clientLogger.debug('   terrainData:', terrainRows, 'x', terrainCols);
       set({ currentGame: gameState })
     })
 
@@ -97,27 +97,27 @@ export const useGameStore = create<GameStore>()(
     })
 
     newSocket.on('player-joined', (data: { playerId: string }) => {
-      console.log('👋 Player joined:', data.playerId)
+      clientLogger.info('👋 Player joined:', data.playerId)
     })
 
     newSocket.on('player-left', (data: { playerId: string }) => {
-      console.log('👋 Player left:', data.playerId)
+      clientLogger.info('👋 Player left:', data.playerId)
     })
 
     newSocket.on('error', (error: { message: string }) => {
-      console.error('❌ Socket error:', error.message)
+      clientLogger.error('❌ Socket error:', error.message)
       alert(error.message)
     })
 
     newSocket.on('action-processed', (result: { success: boolean; message?: string }) => {
       if (!result.success) {
-        console.error('Action failed:', result.message)
+        clientLogger.error('Action failed:', result.message)
         alert(result.message || 'Action failed')
       }
     })
 
     newSocket.on('action-failed', (error: { message: string }) => {
-      console.error('Action failed:', error.message)
+      clientLogger.error('Action failed:', error.message)
       alert(error.message)
     })
 

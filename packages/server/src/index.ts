@@ -19,6 +19,7 @@ import { GameManager } from './game/GameManager';
 import { DatabaseManager } from './database/DatabaseManager';
 import { authRouter } from './routes/auth';
 import { setupSocketHandlers } from './socket/socketHandlers';
+import { serverLogger } from '@wallgame/shared';
 
 const app = express();
 const server = createServer(app);
@@ -55,16 +56,16 @@ async function startServer() {
     // Initialize database connections (skip in development if not available)
     if (process.env.NODE_ENV !== 'development' || process.env.FORCE_DB === 'true') {
       await databaseManager.initialize();
-      console.log('🔌 Database connection established');
+      serverLogger.info('🔌 Database connection established');
     } else {
-      console.log('⚠️  Running in development mode without database');
-      console.log('💡 Set FORCE_DB=true to enable database connection');
+      serverLogger.warn('⚠️  Running in development mode without database');
+      serverLogger.info('💡 Set FORCE_DB=true to enable database connection');
     }
     
     // Initialize GameManager after database is connected
     const gameManager = new GameManager(databaseManager);
     await gameManager.initialize();
-    console.log('🎮 GameManager initialized');
+    serverLogger.info('🎮 GameManager initialized');
     
     // Set up route dependencies
     setDatabaseManager(databaseManager);
@@ -77,18 +78,18 @@ async function startServer() {
     
     server.listen(PORT, () => {
       // WallGame backend server restarting
-      console.log(`📡 Socket.io ready for connections`);
-      console.log(`🌐 Client URL: ${process.env.CLIENT_URL || "http://localhost:3000"}`);
+      serverLogger.info(`📡 Socket.io ready for connections`);
+      serverLogger.info(`🌐 Client URL: ${process.env.CLIENT_URL || "http://localhost:3000"}`);
     });
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
+    serverLogger.error('❌ Failed to start server:', error);
     process.exit(1);
   }
 }
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
-  console.log('🛑 SIGTERM received, shutting down gracefully');
+  serverLogger.info('🛑 SIGTERM received, shutting down gracefully');
   
   // Close socket connections
   io.close();
@@ -100,7 +101,7 @@ process.on('SIGTERM', async () => {
 });
 
 process.on('SIGINT', async () => {
-  console.log('🛑 SIGINT received, shutting down gracefully');
+  serverLogger.info('🛑 SIGINT received, shutting down gracefully');
   
   // Close socket connections
   io.close();

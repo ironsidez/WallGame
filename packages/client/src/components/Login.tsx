@@ -135,17 +135,6 @@ export function Login({}: LoginProps) {
             )}
           </div>
         </div>
-
-        <div className="game-info">
-          <h3>🎮 Game Features</h3>
-          <ul>
-            <li>⚔️ Real-time territorial battles</li>
-            <li>🧩 Tetris-like structure building</li>
-            <li>🏰 Hundreds of simultaneous players</li>
-            <li>📈 Strategic resource management</li>
-            <li>🌍 Infinite expandable world</li>
-          </ul>
-        </div>
       </div>
     </div>
   )

@@ -928,6 +928,7 @@ Supplies are stored in cities and used for production/consumption.
 - ✅ Admin game create/delete
 - ✅ Real-time lobby updates
 - ✅ Game participation tracking
+- ✅ Map generation
 
 ## Phase 2: Core Systems (Next)
 - [ ] [Chat Component](#chat-component)
@@ -955,7 +956,6 @@ Supplies are stored in cities and used for production/consumption.
 - [ ] Alliances
 - [ ] Win conditions
 - [ ] [Unit.Split](#split) / [Unit.Merge](#merge)
-- [ ] Map generation
 
 ---
 
