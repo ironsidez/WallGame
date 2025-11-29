@@ -1,5 +1,5 @@
 import { Pool, PoolClient } from 'pg';
-import { dbLogger } from '@wallgame/shared';
+import { dbLogger } from '../utils/logger';
 
 export interface DatabaseConfig {
   host: string;

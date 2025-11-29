@@ -19,7 +19,7 @@ import { GameManager } from './game/GameManager';
 import { DatabaseManager } from './database/DatabaseManager';
 import { authRouter } from './routes/auth';
 import { setupSocketHandlers } from './socket/socketHandlers';
-import { serverLogger } from '@wallgame/shared';
+import { serverLogger } from './utils/logger';
 
 const app = express();
 const server = createServer(app);

@@ -1,66 +1,58 @@
-import winston from 'winston';
+/**
+ * Universal Logger with Runtime Injection
+ * 
+ * - Default: Console-based logging (works everywhere)
+ * - Server: Can inject Winston via setLoggerFactory() at startup
+ */
 
-// Determine if running in Node.js environment (server/tests) or browser (client)
-const isNode = typeof process !== 'undefined' && process.versions?.node;
+// Logger interface for type safety
+export interface Logger {
+  debug: (message: string, ...meta: any[]) => void;
+  info: (message: string, ...meta: any[]) => void;
+  warn: (message: string, ...meta: any[]) => void;
+  error: (message: string, ...meta: any[]) => void;
+}
 
-// Common log format
-const logFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.errors({ stack: true }),
-  winston.format.printf(({ timestamp, level, message, stack, ...meta }) => {
-    const metaString = Object.keys(meta).length ? JSON.stringify(meta) : '';
-    const stackString = stack ? `\n${stack}` : '';
-    return `[${timestamp}] ${level.toUpperCase()}: ${message}${metaString ? ' ' + metaString : ''}${stackString}`;
-  })
-);
+// Format timestamp in local time (YYYY-MM-DD HH:mm:ss)
+const getTimestamp = () => new Date().toLocaleString('sv-SE');
 
-// Create base logger configuration
-const createLogger = (source: string) => {
-  const transports: winston.transport[] = [];
-
-  // Only add file transports in Node.js (browser can't use fs/path)
-  if (isNode) {
-    // Dynamic import path only in Node
-    const path = require('path');
-    const logsDir = path.join(process.cwd(), 'logs');
-    
-    transports.push(
-      new winston.transports.File({
-        filename: path.join(logsDir, `${source}.log`),
-        level: 'debug'
-      }),
-      new winston.transports.File({
-        filename: path.join(logsDir, 'combined.log'),
-        level: 'debug'
-      }),
-      new winston.transports.File({
-        filename: path.join(logsDir, 'error.log'),
-        level: 'error'
-      })
-    );
+// Default console logger (works in browser and Node)
+const createConsoleLogger = (source: string): Logger => ({
+  debug: (message: string, ...meta: any[]) => {
+    console.debug(`[${getTimestamp()}] [${source}] DEBUG:`, message, ...meta);
+  },
+  info: (message: string, ...meta: any[]) => {
+    console.info(`[${getTimestamp()}] [${source}] INFO:`, message, ...meta);
+  },
+  warn: (message: string, ...meta: any[]) => {
+    console.warn(`[${getTimestamp()}] [${source}] WARN:`, message, ...meta);
+  },
+  error: (message: string, ...meta: any[]) => {
+    console.error(`[${getTimestamp()}] [${source}] ERROR:`, message, ...meta);
   }
+});
 
-  // Add console transport (works in both Node and browser)
-  transports.push(
-    new winston.transports.Console({
-      level: 'debug',
-      format: winston.format.combine(
-        winston.format.colorize(),
-        logFormat
-      )
-    })
-  );
+// Logger registry and factory
+const loggers = new Map<string, Logger>();
+let loggerFactory: (source: string) => Logger = createConsoleLogger;
 
-  return winston.createLogger({
-    format: logFormat,
-    transports
-  });
-};
+/**
+ * Inject a custom logger factory (call from server startup)
+ * Example: setLoggerFactory(createWinstonLogger)
+ */
+export function setLoggerFactory(factory: (source: string) => Logger): void {
+  loggerFactory = factory;
+  // Clear existing loggers so they get recreated with new factory
+  loggers.clear();
+}
 
-// Export specialized loggers for different parts of the application
-export const serverLogger = createLogger('server');
-export const clientLogger = createLogger('client');
-export const dbLogger = createLogger('database');
-
-// Export a default logger (maps to server logger for backwards compatibility)
-export const logger = serverLogger;
+/**
+ * Get or create a logger for a given source
+ * Uses injected factory (Winston on server) or default (console)
+ */
+export function getLogger(source: string): Logger {
+  if (!loggers.has(source)) {
+    loggers.set(source, loggerFactory(source));
+  }
+  return loggers.get(source)!;
+}

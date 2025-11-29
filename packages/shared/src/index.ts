@@ -3,5 +3,9 @@ export * from './types.js';
 export * from './game-logic.js';
 
 // Export logging utilities
-export { logger, serverLogger, clientLogger, dbLogger } from './logger.js';
+export { 
+  getLogger,
+  setLoggerFactory,
+  type Logger
+} from './logger.js';
 

@@ -1,7 +1,8 @@
 import { Server as SocketServer } from 'socket.io';
 import { GameManager } from '../game/GameManager';
 import { DatabaseManager } from '../database/DatabaseManager';
-import { GameState, serverLogger } from '@wallgame/shared';
+import { GameState } from '@wallgame/shared';
+import { serverLogger } from '../utils/logger';
 import jwt from 'jsonwebtoken';
 import { generateRandomMap } from '../game/map-generator';
 import { v4 as uuidv4 } from 'uuid';

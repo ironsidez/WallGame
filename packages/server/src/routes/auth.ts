@@ -3,7 +3,7 @@ import bcrypt from 'bcrypt';
 import { DatabaseManager } from '../database/DatabaseManager';
 import { maskJwtToken } from '../utils/security';
 import { generateJWT, verifyJWT } from '../utils/jwt';
-import { serverLogger } from '@wallgame/shared';
+import { serverLogger } from '../utils/logger';
 
 const router = express.Router();
 
