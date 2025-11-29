@@ -1,97 +1,201 @@
-# Copilot Instructions for WallGame
+# GitHub Copilot Instructions — WallGame
 
-<!-- Use this file to provide workspace-specific custom instructions to Copilot. For more details, visit https://code.visualstudio.com/docs/copilot/copilot-customization#_use-a-githubcopilotinstructionsmd-file -->
+You are working in the **WallGame** monorepo: a browser-based, grid/pixel RTS with a **Node/Express + Socket.io** backend and a **React + TypeScript (Vite)** frontend.
 
-## Project Overview
-WallGame is a browser-based classical real-time strategy game supporting hundreds of simultaneous players. Players build cities, gather resources, train armies, and compete for territorial dominance on persistent grid-based maps.
+## 🚦 Source of truth (read first)
+- **Game rules, entities, UI flows:** `docs/GAME_DESIGN_SPEC.md` (treat as canonical)
+- **System shape & scaling roadmap:** `docs/ARCHITECTURE.md`
+- **HTTP + WebSocket contract:** `docs/API.md`
+- **Local setup / env:** `docs/DEVELOPMENT.md` + `packages/server/.env.example`
 
-**📋 Game Design Spec**: See [docs/GAME_DESIGN_SPEC.md](../docs/GAME_DESIGN_SPEC.md) - **THE SOURCE OF TRUTH**
-**🏗️ Architecture details**: See [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) for scaling roadmap  
-**🛠️ Development setup**: See [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md) for environment setup
+If a requested change is not described in the design spec, prefer to **propose a spec update first** (or explicitly call out the mismatch and implement only what’s already specified).
 
-## 🚨 CRITICAL: Spec-Driven Development
+---
 
-**ALL features MUST be defined in `docs/GAME_DESIGN_SPEC.md` BEFORE implementation.**
+## 🗂️ Repo layout (monorepo workspaces)
+- `packages/client` — React + TS (Vite), canvas rendering (grid), Zustand stores, Socket.io client
+- `packages/server` — Node + TS (ESM), Express routes, Socket.io server, PostgreSQL (`pg`), security + Winston logging
+- `packages/shared` — cross-cutting types and helpers (position keys, distances, logger factory)
+- `tests` — Playwright E2E (Page Object Model) + rich artifacts
+- `logs` — server-side log files (generated at runtime)
 
-### Feature Development Workflow
-1. **Check the Spec**: Before building ANY feature, verify it exists in `GAME_DESIGN_SPEC.md`
-2. **Ask Questions**: If the spec is unclear or incomplete, ASK the user for clarification
-3. **Update Spec FIRST**: Add/update the spec with clear requirements BEFORE writing any code
-4. **Write Tests FIRST**: Create/update tests that validate the new feature BEFORE implementation
-5. **Implement Feature**: Only after spec and tests are in place
-6. **Run Full Test Suite**: Verify ALL tests pass after implementation
-7. **Never Guess**: Do not make assumptions about game mechanics - if it's not in the spec, ask
+Prefer **reusing existing modules/patterns** over introducing new systems.
 
-### What Requires Spec Updates
-- New game mechanics or systems
-- Changes to existing behavior
-- New UI components or user flows
-- New socket events or API endpoints
-- Changes to data models or state management
+---
 
-## Tech Stack
-- **Monorepo structure** with client, server, and shared packages
-- **Backend**: Node.js + TypeScript + Socket.io + Redis + PostgreSQL
-- **Frontend**: React + TypeScript + Canvas API
-- **Real-time communication** via Socket.io for game state synchronization
+## ✅ How Copilot should deliver changes
+When asked to implement a feature/fix/refactor, respond with:
+1. **Plan (1–5 steps)** and any assumptions
+2. **Target files** (exact paths)
+3. **Minimal patch** (smallest coherent change-set)
+4. **How to verify** (commands + what artifacts/logs to inspect)
 
-## Code Style Guidelines
-- Use TypeScript for all new code
-- Follow functional programming patterns where possible
-- Implement proper error handling and validation
-- Use descriptive variable and function names
-- Add JSDoc comments for complex game logic
-- Separate game logic from presentation code
+Avoid “big bang” rewrites. Keep PRs focused.
 
-## 🧪 MANDATORY TEST PROTOCOL
-**⚠️ CRITICAL: Follow this protocol for ALL changes**
+---
 
-### Test-First Development
-1. **Write/Update Tests FIRST** - Before implementing any feature
-2. **Tests Should Initially Fail** - Confirms test is checking new behavior
-3. **Implement Feature** - Make the tests pass
-4. **Run Full Suite** - Ensure no regressions
+## 🧠 Domain & gameplay rules
+- This is an RTS with a **persistent grid-based map** and server-authoritative state.
+- Keep mechanics consistent with *entity-first* definitions in `docs/GAME_DESIGN_SPEC.md`.
+- If you add or change an entity property/action/rule, update the spec (and any relevant reference tables).
 
-### Before ANY code changes:
+---
+
+## 🔁 Contracts: keep server/client/shared in sync
+### Shared types/helpers are preferred
+- Put cross-package types in `packages/shared/src/types.ts`
+- Put cross-package utility logic in `packages/shared/src/game-logic.ts`
+- Avoid duplicate helpers/constants across client/server (e.g., position-to-key logic).
+
+### Socket + API compatibility
+- Socket event names/payloads must match usage in:
+  - server: `packages/server/src/socket/socketHandlers.ts`
+  - client: `packages/client/src/stores/gameStore.ts` and UI components
+  - docs: `docs/API.md` (update it when behavior changes)
+
+### Serialization matters
+`GameState` contains `Map`s and other non-JSON-native structures.
+- When sending state over Socket.io, follow the existing `serializeGameState(...)` pattern.
+- If you add new fields to state, **explicitly include them** in serialization/deserialization paths.
+
+---
+
+## 🗄️ Database / SQL expectations
+- The canonical schema is `database/setup.sql`. Treat it as **source of truth** for tables/constraints/indexes.
+- Avoid ad-hoc schema drift:
+  - If code changes require schema changes, update `database/setup.sql` **and** any server DB access code/types that depend on it.
+  - Prefer additive, backwards-compatible changes when possible (new columns with defaults, new tables, new indexes).
+- Be explicit about correctness:
+  - Add/verify constraints (PK/FK/UNIQUE/CHECK) when they encode game rules.
+  - Add indexes for frequently queried fields, but don’t add speculative indexes without evidence.
+- Keep DB ↔ API ↔ shared types in sync:
+  - If a DB column changes meaning/name/type, update `packages/shared` types and server queries, and update `docs/API.md` if payloads are affected.
+- When debugging persistence issues, consult `logs/database.log` and `logs/error.log` and reference the exact error/query lines.
+
+### 🚫 No migration frameworks
+- Do **not** introduce or suggest migration tooling (Prisma/Knex/TypeORM/MikroORM/Flyway/etc.).
+- Do **not** create `migrations/` folders or “generate a migration” steps.
+- All schema evolution happens by **editing `database/setup.sql` directly** (and updating dependent queries/types/docs).
+- If a change would normally be expressed as a migration, instead:
+  1) update `database/setup.sql`,
+  2) update server queries + `packages/shared` types,
+  3) update docs (API/spec) if payloads change,
+  4) verify via Playwright and check `logs/database.log`.
+
+---
+
+## 🧩 Coding conventions & quality bar
+### TypeScript
+- Assume **strict** typing; avoid `any`.
+- If you must accept unknown data (network/DB), narrow it quickly with checks.
+- Prefer `import type { ... }` for type-only imports when appropriate.
+
+### Formatting & code style (match the package)
+- **Client (`packages/client`)**: follow the existing React/Vite style (hooks, minimal semicolons, single quotes).
+- **Server/Shared (`packages/server`, `packages/shared`)**: follow the existing Node/TS style (semicolons are common, single quotes).
+- Prefer small, readable functions and descriptive names over clever one-liners.
+
+### React (client)
+- Use function components + hooks.
+- Prevent expensive rerenders in the canvas/grid loop:
+  - do heavy work outside render
+  - memoize derived data
+  - redraw only the viewport
+- Prefer stable selectors for tests (`data-testid`) over brittle CSS/text selectors.
+
+### Node/Express/Socket.io (server)
+- Validate inputs at boundaries; return consistent error shapes.
+- Enforce auth/authorization server-side (never trust the client).
+- Prefer structured logs using the repo’s logger utilities (below).
+
+---
+
+## 🪵 Logging & security
+### Use the project loggers (don’t invent new ones)
+- Server: import from `packages/server/src/utils/logger.ts`
+  - `serverLogger`, `dbLogger`, `createLogger(...)`
+- Shared logger supports runtime injection; server injects Winston at startup.
+- Avoid `console.log` in production paths (ok for quick local debugging / scripts).
+
+### Check logs during debugging
+After running the app or tests, inspect the **runtime logs**:
+- `logs/server.log`
+- `logs/database.log`
+- `logs/combined.log`
+- `logs/error.log`
+- When explaining behavior or regressions, **base conclusions on evidence** from `tests/test-results/<timestamp>/...` and `logs/*.log` (reference the exact files you used).
+
+### Never leak secrets
+- Do not log raw JWTs/passwords.
+- Use masking helpers (e.g., `packages/server/src/utils/security.ts` and test masking utilities).
+
+---
+
+## 🧪 Testing is required after changes
+### The “golden path” (acceptance)
+Run Playwright via the root test runner:
 ```bash
-npm run test
+npm test
 ```
-**Document**: Note current test count and pass/fail status
+Notes:
+- `npm test` runs `tests/run-tests.js`, which sets a single timestamp and launches Playwright.
+- Playwright auto-starts/reuses dev servers via `playwright.config.js`.
 
-### After implementing changes:
+### Useful unit test commands
+Run package-level unit tests when relevant:
 ```bash
-npm run test
+npm test --workspace=@wallgame/server
+npm test --workspace=@wallgame/shared
+npm test --workspace=@wallgame/client
 ```
-**Required**: ALL tests must pass. Report any failures immediately.
 
-### Test Results Analysis
-- **JSON Report**: Analyze `tests/test-results/[timestamp]/test-results.json` for detailed behavior verification
-- **Summary**: Check `tests/test-results/[timestamp]/summary.txt` for quick overview
-- **Screenshots**: Review visual evidence in `screenshots/` folder
-- **Regression Detection**: Compare JSON results before/after changes to spot behavioral differences
-
-### Test Suite Maintenance
-- **New Features**: Write tests BEFORE implementing the feature
-- **Bug Fixes**: Write a failing test that reproduces the bug, then fix it
-- **Refactoring**: Ensure existing tests still pass
-- **Never**: Update tests AFTER implementation just to make them pass (this hides bugs)
-
-### Failure Response
-If tests fail:
-1. **STOP** - Do not proceed with more changes
-2. **Debug**: Check `tests/test-results/[timestamp]/html-report/index.html`
-3. **JSON Analysis**: Review `test-results.json` for behavioral insights
-4. **Screenshots**: Review visual evidence in `screenshots/` folder
-5. **Fix**: Address root cause before continuing
-
-### Quick Commands
+### Build/typecheck sanity
 ```bash
-npm run dev                    # Start development server
-npm run test                   # Run test suite (preferred method)
+npm run build
 ```
 
-### Test Architecture
-- **Page Object Model**: Clean, maintainable test structure in `tests/pages/`
-- **Strict Validation**: Tests fail hard on mismatches - no tolerance for incorrect data
-- **Comprehensive Coverage**: Full user journey with visual documentation
-- **Data Collection**: JSON reports for behavioral analysis and debugging
+### Where to look after tests
+Artifacts are written under:
+- `tests/test-results/<timestamp>/summary.txt`
+- `tests/test-results/<timestamp>/test-results.json`
+- `tests/test-results/<timestamp>/html-report/`
+- `tests/test-results/<timestamp>/screenshots/`
+- plus traces/videos on failure (see Playwright config output directory)
+
+When considering “what happened”, use:
+- Playwright artifacts (**especially screenshots + summary + JSON**)
+- server log files under `logs/`
+
+### Test setup expectations
+- E2E tests load credentials from `packages/server/.env.local` (see `tests/setup/test-env.js`).
+- Prefer adding/maintaining tests using the existing Page Object Model in `tests/pages/`.
+
+### Fix failures the right way
+- Don’t “fix” tests by weakening assertions unless the spec/contract truly changed.
+- Use artifacts + logs to find the root cause and correct the behavior.
+
+---
+
+## 📝 Docs discipline
+If your change affects behavior visible to players or API consumers, update docs alongside code:
+- Gameplay/behaviors/entities: `docs/GAME_DESIGN_SPEC.md`
+- REST/WebSocket contract: `docs/API.md`
+- System behavior or constraints: `docs/ARCHITECTURE.md`
+- Setup/scripts/env: `docs/DEVELOPMENT.md` and/or `packages/server/.env.example`
+
+---
+
+## ⚡ Performance & scalability reminders
+- Assume maps can be large: avoid O(width×height) work on every tick or render.
+- Prefer diffs/incremental updates over full-state transmission.
+- Avoid blocking the Node event loop with heavy synchronous work; batch or async where possible.
+
+---
+
+## ✅ Definition of done (for any change)
+- Compiles/builds cleanly (`npm run build`)
+- Relevant unit tests pass (workspace tests as appropriate)
+- Playwright acceptance suite passes (`npm test`)
+- Reviewed artifacts in `tests/test-results/<timestamp>/...` when behavior is in question
+- Checked `logs/*.log` for warnings/errors/regressions
+- Updated docs/spec if external behavior changed
