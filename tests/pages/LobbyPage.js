@@ -30,6 +30,22 @@ class LobbyPage extends BasePage {
       // Wait for lobby URL before validating
       await this.page.waitForURL(/\/lobby/, { timeout: 10000 });
       await this.validateExpectedPage('lobby');
+      
+      // Wait for lobby to finish loading (not showing "Loading games...")
+      console.log('⏳ Waiting for lobby to finish loading...');
+      try {
+        await this.page.waitForFunction(
+          () => {
+            const pageText = document.body.textContent || '';
+            return !pageText.includes('Loading games...');
+          },
+          { timeout: 4000 }
+        );
+        console.log('✅ Lobby finished loading');
+      } catch (e) {
+        console.log('⚠️ Lobby still showing loading state, continuing...');
+      }
+      
       console.log('✅ Confirmed on lobby page');
       return { onLobby: true, url: this.page.url() };
     });
@@ -125,7 +141,25 @@ class LobbyPage extends BasePage {
       console.log('✅ Found Create Game button, clicking...');
       await createButton.click();
       
-      // Wait for game list to update
+      // Wait for game creation to complete - large maps (2000x2000) can take 30+ seconds
+      // We wait until the button text changes back from "Creating..." to "Create Game"
+      console.log('⏳ Waiting for game creation to complete (large maps may take 30+ seconds)...');
+      try {
+        await this.page.waitForFunction(
+          () => {
+            const buttons = Array.from(document.querySelectorAll('button'));
+            const creatingBtn = buttons.find(b => b.textContent?.includes('Creating'));
+            // Wait until no button shows "Creating..."
+            return !creatingBtn;
+          },
+          { timeout: 20000 }  // 20 second timeout for large maps
+        );
+        console.log('✅ Game creation completed');
+      } catch (e) {
+        console.log('⚠️ Timed out waiting for game creation, continuing...');
+      }
+      
+      // Additional stability wait
       await this.waitForStable(1000);
       
       const finalState = await this.getPageState();

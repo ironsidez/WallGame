@@ -1,7 +1,7 @@
 import { Server as SocketServer } from 'socket.io';
 import { GameManager } from '../game/GameManager';
 import { DatabaseManager } from '../database/DatabaseManager';
-import { GameState } from '@wallgame/shared';
+import { GameState, GameMetadata, LobbyUpdate } from '@wallgame/shared';
 import { serverLogger } from '../utils/logger';
 import jwt from 'jsonwebtoken';
 import { generateRandomMap } from '../game/map-generator';
@@ -34,6 +34,30 @@ function convertTerrainToData(mapData: { terrain: string[][] }): string[][] {
   return mapData.terrain;
 }
 
+/**
+ * Build lobby update and broadcast to all clients in lobby room
+ */
+async function broadcastLobbyUpdate(io: SocketServer, db: DatabaseManager): Promise<void> {
+  const games: GameMetadata[] = await db.getActiveGames();
+  const lobbyUpdate: LobbyUpdate = {
+    games,
+    onlinePlayerCount: io.sockets.sockets.size
+  };
+  io.to('lobby').emit('lobby:update', lobbyUpdate);
+  serverLogger.debug(`📡 Broadcast lobby update: ${games.length} games, ${lobbyUpdate.onlinePlayerCount} online`);
+}
+
+/**
+ * Build game metadata update and broadcast to game room
+ */
+async function broadcastGameMetadata(io: SocketServer, db: DatabaseManager, gameId: string): Promise<void> {
+  const metadata: GameMetadata | null = await db.getGameMetadata(gameId);
+  if (!metadata) return;
+  
+  io.to(`game:${gameId}`).emit('game:metadata', metadata);
+  serverLogger.debug(`📡 Broadcast game metadata for ${gameId}: ${metadata.activePlayerCount}/${metadata.playerCount} players`);
+}
+
 export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, databaseManager: DatabaseManager) {
   io.on('connection', async (socket) => {
     serverLogger.info(`🔌 Player connected: ${socket.id}`);
@@ -62,7 +86,21 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
 
     // ===== LOBBY EVENTS =====
     
-    // Get all games
+    // Join lobby room (for receiving updates)
+    socket.on('lobby:join', async () => {
+      await socket.join('lobby');
+      serverLogger.info(`👋 User ${currentUserId} joined lobby`);
+      // Send initial lobby state
+      await broadcastLobbyUpdate(io, databaseManager);
+    });
+    
+    // Leave lobby room
+    socket.on('lobby:leave', async () => {
+      await socket.leave('lobby');
+      serverLogger.info(`👋 User ${currentUserId} left lobby`);
+    });
+    
+    // Get all games (legacy - kept for backwards compatibility)
     socket.on('get-games', async () => {
       try {
         const games = await databaseManager.getActiveGames();
@@ -120,9 +158,8 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         
         serverLogger.info(`✅ Game "${data.name}" created`);
         
-        // Broadcast to all clients
-        const games = await databaseManager.getActiveGames();
-        io.emit('games-list', games);
+        // Broadcast lobby update to all clients in lobby
+        await broadcastLobbyUpdate(io, databaseManager);
         
         socket.emit('game-created', { gameId });
       } catch (error) {
@@ -145,9 +182,8 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         
         serverLogger.info(`🗑️ Game ${data.gameId} deleted`);
         
-        // Broadcast to all clients
-        const games = await databaseManager.getActiveGames();
-        io.emit('games-list', games);
+        // Broadcast lobby update to all clients in lobby
+        await broadcastLobbyUpdate(io, databaseManager);
       } catch (error) {
         serverLogger.error('Delete game error:', error);
         socket.emit('error', { message: 'Failed to delete game' });
@@ -161,22 +197,31 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
       try {
         const { gameId } = data;
         
-        // Check not already in another game
-        const allGames = await databaseManager.getActiveGames();
-        for (const game of allGames) {
-          if (game.id === gameId) continue;
-          const participants = await databaseManager.getGamePlayers(game.id);
-          const inGame = participants.find((p: any) => p.id === currentUserId);
-          if (inGame) {
-            socket.emit('error', { 
-              message: 'You are already in another game. Leave that game first.' 
-            });
-            return;
-          }
+        // Check if user is already in another game - if so, leave it first
+        const currentGame = await databaseManager.getUserCurrentGame(currentUserId!);
+        if (currentGame && currentGame.gameId !== gameId) {
+          const oldGameId = currentGame.gameId;
+          
+          // Mark player as inactive in old game
+          await databaseManager.setPlayerInGame(oldGameId, currentUserId!, false);
+          
+          // Leave old game room
+          await socket.leave(`game:${oldGameId}`);
+          
+          // Notify others in old game
+          socket.to(`game:${oldGameId}`).emit('player-left', { playerId: currentUserId });
+          
+          serverLogger.info(`🚪 User ${currentUserId} auto-left game ${oldGameId} to join ${gameId}`);
+          
+          // Broadcast updates for old game
+          await broadcastGameMetadata(io, databaseManager, oldGameId);
         }
         
         // Add to participants
         await databaseManager.addPlayerToGame(gameId, currentUserId!);
+        
+        // Mark player as active in game
+        await databaseManager.setPlayerInGame(gameId, currentUserId!, true);
         
         // Load game state
         await gameManager.initializeGame(gameId);
@@ -187,21 +232,22 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
           return;
         }
         
-        // Join socket room
-        await socket.join(gameId);
+        // Leave lobby, join game room
+        await socket.leave('lobby');
+        await socket.join(`game:${gameId}`);
         currentGameId = gameId;
         
         serverLogger.info(`✅ User ${currentUserId} joined game ${gameId}`);
         
-        // Send game state
+        // Send game state to joining player
         socket.emit('game-state', serializeGameState(gameState));
         
-        // Notify others
-        socket.to(gameId).emit('player-joined', { playerId: currentUserId });
+        // Notify others in game
+        socket.to(`game:${gameId}`).emit('player-joined', { playerId: currentUserId });
         
-        // Update lobby
-        const games = await databaseManager.getActiveGames();
-        io.emit('games-list', games);
+        // Broadcast updates
+        await broadcastGameMetadata(io, databaseManager, gameId);
+        await broadcastLobbyUpdate(io, databaseManager);
         
       } catch (error) {
         serverLogger.error('Join game error:', error);
@@ -214,19 +260,25 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
       if (!currentGameId || !currentUserId) return;
       
       try {
-        // Leave socket room
-        await socket.leave(currentGameId);
+        const gameId = currentGameId;
         
-        serverLogger.info(`🚪 User ${currentUserId} left game ${currentGameId}`);
+        // Mark player as inactive in game
+        await databaseManager.setPlayerInGame(gameId, currentUserId, false);
         
-        // Notify others
-        socket.to(currentGameId).emit('player-left', { playerId: currentUserId });
+        // Leave game room, rejoin lobby
+        await socket.leave(`game:${gameId}`);
+        await socket.join('lobby');
+        
+        serverLogger.info(`🚪 User ${currentUserId} left game ${gameId}`);
+        
+        // Notify others in game
+        socket.to(`game:${gameId}`).emit('player-left', { playerId: currentUserId });
         
         currentGameId = null;
         
-        // Update lobby
-        const games = await databaseManager.getActiveGames();
-        io.emit('games-list', games);
+        // Broadcast updates
+        await broadcastGameMetadata(io, databaseManager, gameId);
+        await broadcastLobbyUpdate(io, databaseManager);
         
       } catch (error) {
         serverLogger.error('Leave game error:', error);
@@ -238,12 +290,15 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
       serverLogger.info(`🔌 User ${currentUserId} disconnected`);
       
       if (currentGameId && currentUserId) {
-        // Notify others in game
-        socket.to(currentGameId).emit('player-left', { playerId: currentUserId });
+        // Mark player as inactive
+        await databaseManager.setPlayerInGame(currentGameId, currentUserId, false);
         
-        // Update lobby
-        const games = await databaseManager.getActiveGames();
-        io.emit('games-list', games);
+        // Notify others in game
+        socket.to(`game:${currentGameId}`).emit('player-left', { playerId: currentUserId });
+        
+        // Broadcast updates
+        await broadcastGameMetadata(io, databaseManager, currentGameId);
+        await broadcastLobbyUpdate(io, databaseManager);
       }
     });
   });

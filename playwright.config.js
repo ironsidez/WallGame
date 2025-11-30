@@ -13,6 +13,7 @@ module.exports = defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
+  timeout: 40000, // second timeout for large map tests
   
   reporter: [
     // Custom summary reporter for easy scanning

@@ -1,8 +1,10 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { io, Socket } from 'socket.io-client'
-import { GameState, Player, clientLogger } from '@wallgame/shared'
+import { GameState, Player, GameMetadata, getLogger } from '@wallgame/shared'
 import { useAuthStore } from './authStore'
+
+const clientLogger = getLogger('client');
 
 interface GameStore {
   // Socket connection
@@ -11,7 +13,8 @@ interface GameStore {
   
   // Game state
   currentGame: GameState | null
-  currentGameId: string | null // Add this to track which game we're in
+  currentGameId: string | null
+  gameMetadata: GameMetadata | null  // Real-time metadata
   players: Player[]
   currentPlayer: Player | null
   
@@ -38,6 +41,7 @@ export const useGameStore = create<GameStore>()(
       connected: false,
       currentGame: null,
       currentGameId: null,
+      gameMetadata: null,
       players: [],
       currentPlayer: null,
       selectedUnit: null,
@@ -92,6 +96,12 @@ export const useGameStore = create<GameStore>()(
       set({ currentGame: gameState })
     })
 
+    // Listen for game metadata updates (player counts, status, etc.)
+    newSocket.on('game:metadata', (metadata: GameMetadata) => {
+      clientLogger.info('📡 Game metadata update:', metadata.activePlayerCount, '/', metadata.playerCount, 'players');
+      set({ gameMetadata: metadata })
+    })
+
     newSocket.on('players-update', (players: Player[]) => {
       set({ players })
     })
@@ -132,6 +142,7 @@ export const useGameStore = create<GameStore>()(
         socket: null, 
         connected: false,
         currentGame: null,
+        gameMetadata: null,
         players: [],
         currentPlayer: null
       })
@@ -158,7 +169,8 @@ export const useGameStore = create<GameStore>()(
       
       set({ 
         currentGame: null,
-        currentGameId: null, // Clear the persisted game ID 
+        currentGameId: null,
+        gameMetadata: null,
         players: [], 
         currentPlayer: null,
         selectedUnit: null,

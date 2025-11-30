@@ -372,8 +372,8 @@ export class DatabaseManager {
     const query = `
       SELECT 
         g.*,
-        COUNT(DISTINCT CASE WHEN gp.is_in_game THEN gp.user_id END) as in_game_count,
-        COUNT(DISTINCT gp.user_id) as participating_count
+        COUNT(DISTINCT gp.user_id) as player_count,
+        COUNT(DISTINCT CASE WHEN gp.is_in_game THEN gp.user_id END) as active_player_count
       FROM games g
       LEFT JOIN game_participants gp ON g.id = gp.game_id
       WHERE g.status IN ('paused', 'playing')
@@ -383,11 +383,100 @@ export class DatabaseManager {
     
     const result = await this.pool.query(query);
     
-    // Map database status to client-expected status
-    return result.rows.map(game => ({
-      ...game,
-      status: game.status === 'paused' ? 'waiting' : game.status
+    // Map DB snake_case to TypeScript camelCase (GameMetadata interface)
+    return result.rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      status: row.status,
+      playerCount: parseInt(row.player_count, 10) || 0,
+      activePlayerCount: parseInt(row.active_player_count, 10) || 0,
+      maxPlayers: row.max_players,
+      mapWidth: row.map_width,
+      mapHeight: row.map_height,
+      popTicksRemaining: row.pop_ticks_remaining,
+      createdAt: row.created_at
     }));
+  }
+
+  /**
+   * Get full GameMetadata for a specific game
+   */
+  async getGameMetadata(gameId: string): Promise<any | null> {
+    if (!this.pool) throw new Error('Database pool not initialized');
+
+    const query = `
+      SELECT 
+        g.*,
+        COUNT(DISTINCT gp.user_id) as player_count,
+        COUNT(DISTINCT CASE WHEN gp.is_in_game THEN gp.user_id END) as active_player_count
+      FROM games g
+      LEFT JOIN game_participants gp ON g.id = gp.game_id
+      WHERE g.id = $1
+      GROUP BY g.id
+    `;
+    
+    const result = await this.pool.query(query, [gameId]);
+    
+    if (result.rows.length === 0) return null;
+    
+    const row = result.rows[0];
+    // Map DB snake_case to TypeScript camelCase (GameMetadata interface)
+    return {
+      id: row.id,
+      name: row.name,
+      status: row.status,
+      playerCount: parseInt(row.player_count, 10) || 0,
+      activePlayerCount: parseInt(row.active_player_count, 10) || 0,
+      maxPlayers: row.max_players,
+      mapWidth: row.map_width,
+      mapHeight: row.map_height,
+      popTicksRemaining: row.pop_ticks_remaining,
+      createdAt: row.created_at
+    };
+  }
+
+  /**
+   * Get player counts for a specific game
+   */
+  async getGamePlayerCounts(gameId: string): Promise<{ playerCount: number; activePlayerCount: number }> {
+    if (!this.pool) throw new Error('Database pool not initialized');
+
+    const query = `
+      SELECT 
+        COUNT(DISTINCT user_id) as player_count,
+        COUNT(DISTINCT CASE WHEN is_in_game THEN user_id END) as active_player_count
+      FROM game_participants
+      WHERE game_id = $1
+    `;
+    
+    const result = await this.pool.query(query, [gameId]);
+    return {
+      playerCount: parseInt(result.rows[0]?.player_count, 10) || 0,
+      activePlayerCount: parseInt(result.rows[0]?.active_player_count, 10) || 0
+    };
+  }
+
+  /**
+   * Get the game a user is currently active in (is_in_game = true)
+   * Returns null if user is not in any game
+   */
+  async getUserCurrentGame(userId: string): Promise<{ gameId: string } | null> {
+    if (!this.pool) throw new Error('Database pool not initialized');
+
+    const query = `
+      SELECT game_id 
+      FROM game_participants 
+      WHERE user_id = $1 AND is_in_game = true
+      LIMIT 1
+    `;
+    
+    const result = await this.pool.query(query, [userId]);
+    
+    if (result.rows.length === 0) {
+      return null;
+    }
+    
+    return { gameId: result.rows[0].game_id };
   }
 
   /**

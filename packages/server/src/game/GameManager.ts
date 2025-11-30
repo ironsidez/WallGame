@@ -31,6 +31,7 @@ export class GameManager {
 
   /**
    * Load active games from PostgreSQL on startup
+   * Reuses initializeGame() to avoid duplicate logic
    */
   private async loadActiveGamesFromDatabase(): Promise<void> {
     try {
@@ -38,119 +39,7 @@ export class GameManager {
       console.log(`📋 Loading ${activeGames.length} active games from database...`);
       
       for (const dbGame of activeGames) {
-        // Try to load game state from memory
-        let gameState = await this.loadGameState(dbGame.id);
-        
-        // Check if loaded game has terrain data - regenerate if missing
-        if (gameState && (!gameState.terrainData || gameState.terrainData.length === 0)) {
-          const mapWidth = gameState.settings?.mapWidth || 200;
-          const mapHeight = gameState.settings?.mapHeight || 200;
-          const mapSize = mapWidth * mapHeight;
-          
-          console.log(`🗺️ Game ${dbGame.name} missing terrainData (${mapWidth}x${mapHeight} = ${mapSize.toLocaleString()} tiles)`);
-          
-          // For large maps (>100k tiles), generate async in background
-          if (mapSize > 100000) {
-            console.log(`⏳ Large map detected - starting with plains, generating in background...`);
-            // Start with placeholder terrain immediately (non-blocking)
-            gameState.terrainData = this.createDefaultTerrainData(mapWidth, mapHeight);
-            await this.saveGameState(gameState);
-            
-            // Generate actual terrain in background
-            this.generateTerrainAsync(gameState.id, mapWidth, mapHeight, gameState.settings?.terrainWeights);
-          } else {
-            // Small maps can be generated synchronously
-            console.log(`🗺️ Generating small map synchronously...`);
-            const mapData = await this.loadMap(mapWidth, mapHeight, gameState.settings?.terrainWeights);
-            if (mapData) {
-              gameState.terrainData = this.convertTerrainToData(mapData);
-              await this.saveGameState(gameState);
-            }
-          }
-        }
-        
-        // If not in memory, create a new game state
-        if (!gameState) {
-          console.log(`🎮 Creating new game state for ${dbGame.name} (${dbGame.id})`);
-          const settings = typeof dbGame.settings === 'string' 
-            ? JSON.parse(dbGame.settings) 
-            : dbGame.settings || {};
-            
-          gameState = {
-            id: dbGame.id,
-            name: dbGame.name,
-            players: new Map(),
-            cities: new Map(),
-            buildings: new Map(),
-            units: new Map(),
-            grid: {
-              width: settings.mapWidth || 200,
-              height: settings.mapHeight || 200,
-              squares: new Map()
-            },
-            terrainData: [], // Will be populated after map generation
-            gamePhase: dbGame.status === 'waiting' ? GamePhase.WAITING : GamePhase.ACTIVE,
-            currentTick: 0,
-            lastPopulationTick: 0,
-            startTime: new Date(dbGame.created_at),
-            lastUpdate: new Date(dbGame.updated_at || dbGame.created_at),
-            settings: {
-              maxPlayers: settings.maxPlayers || 100,
-              mapWidth: settings.mapWidth || 200,
-              mapHeight: settings.mapHeight || 200,
-              mapSource: settings.mapSource || 'custom',
-              terrainWeights: settings.terrainWeights,
-              tickLengthMs: settings.tickLengthMs || 1000,
-              ticksPerPopulationUpdate: settings.ticksPerPopulationUpdate || 10,
-              cityBuildZoneRadius: settings.cityBuildZoneRadius || 10,
-              startingUnitTypes: settings.startingUnitTypes || [UnitType.SETTLER],
-              minPlayerDistance: settings.minPlayerDistance || 10
-            }
-          };
-          
-          // Load map terrain (generate procedural)
-          const mapData = await this.loadMap(
-            settings.mapWidth || 200,
-            settings.mapHeight || 200,
-            settings.terrainWeights
-          );
-          if (mapData && gameState) {
-            // Store terrain as compact 2D array (not individual grid squares)
-            gameState.terrainData = this.convertTerrainToData(mapData);
-            console.log(`✅ Stored terrain data: ${settings.mapWidth}x${settings.mapHeight}`);
-          } else if (gameState) {
-            // Fallback: create default plains terrain data
-            gameState.terrainData = this.createDefaultTerrainData(
-              settings.mapWidth || 200,
-              settings.mapHeight || 200
-            );
-            console.log(`✅ Created default terrain data: ${settings.mapWidth || 200}x${settings.mapHeight || 200}`);
-          }
-          
-          // Load players from database and add to game state
-          const dbPlayers = await this.databaseManager.getGamePlayers(dbGame.id);
-          console.log(`👥 Loading ${dbPlayers.length} players for game ${dbGame.name} (${dbGame.id})`);
-          
-          if (dbPlayers.length > 0) {
-            console.log('   Player details:', dbPlayers.map(p => ({ id: p.id, username: p.username, left_at: p.left_at })));
-          }
-          
-          for (const dbPlayer of dbPlayers) {
-            const player = {
-              id: dbPlayer.id,
-              username: dbPlayer.username,
-              isAdmin: false,
-              isOnline: false, // Will be set to true when they connect via socket
-              currentGameId: dbGame.id,
-              participatingGameIds: [dbGame.id]
-            };
-            gameState.players.set(player.id, player);
-          }
-        }
-        
-        if (gameState) {
-          this.gameStates.set(dbGame.id, gameState);
-        }
+        await this.initializeGame(dbGame.id);
       }
       
       console.log(`✅ Loaded ${this.gameStates.size} games into memory`);
@@ -328,41 +217,6 @@ export class GameManager {
   }
 
   /**
-   * Generate terrain asynchronously in the background (for large maps)
-   * This avoids blocking server startup with expensive map generation
-   */
-  private async generateTerrainAsync(
-    gameId: string, 
-    width: number, 
-    height: number, 
-    terrainWeights?: any
-  ): Promise<void> {
-    try {
-      const startTime = Date.now();
-      console.log(`🌍 Starting background terrain generation for game ${gameId} (${width}x${height})...`);
-      
-      // Generate the map (this will take several seconds for large maps)
-      const mapData = await this.loadMap(width, height, terrainWeights);
-      
-      if (mapData) {
-        const gameState = this.gameStates.get(gameId);
-        if (gameState) {
-          gameState.terrainData = this.convertTerrainToData(mapData);
-          await this.saveGameState(gameState);
-          
-          const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-          console.log(`✅ Background terrain generation complete for ${gameId} in ${duration}s`);
-          
-          // Broadcast updated terrain to all connected clients
-          // TODO: Implement terrain update broadcast via socket
-        }
-      }
-    } catch (error) {
-      console.error(`❌ Background terrain generation failed for ${gameId}:`, error);
-    }
-  }
-
-  /**
    * Get terrain at a specific position from terrain data
    */
   getTerrainAt(gameState: GameState, x: number, y: number): TerrainType {
@@ -429,19 +283,12 @@ export class GameManager {
    * Gets a game state by ID
    */
   async getGameState(gameId: string): Promise<GameState | null> {
-    // Try memory first
-    let gameState = this.gameStates.get(gameId);
-    
-    if (!gameState) {
-      // Try loading from database
-      const loadedState = await this.loadGameState(gameId);
-      if (loadedState) {
-        gameState = loadedState;
-        this.gameStates.set(gameId, gameState);
-      }
+    // Try memory first, then load from database if needed
+    if (!this.gameStates.has(gameId)) {
+      await this.initializeGame(gameId);
     }
     
-    return gameState || null;
+    return this.gameStates.get(gameId) || null;
   }
 
   /**
@@ -697,14 +544,4 @@ export class GameManager {
     }
   }
 
-  /**
-   * Loads game state from PostgreSQL
-   * TODO: Implement full game state loading
-   * For now, returns null (game state built from database on startup)
-   */
-  private async loadGameState(gameId: string): Promise<GameState | null> {
-    // TODO: Implement PostgreSQL game state loading
-    // For MVP, game state is built from database on startup only
-    return null;
-  }
 }

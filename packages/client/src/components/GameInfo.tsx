@@ -1,11 +1,11 @@
 import { useGameStore } from '../stores'
 
 export function GameInfo() {
-  const { currentGame, players } = useGameStore()
+  const { currentGame, gameMetadata } = useGameStore()
 
-  // Count online players
-  const onlinePlayers = players?.filter(p => p.isOnline)?.length || 0
-  const totalPlayers = players?.length || 0
+  // Get player counts from gameMetadata (event-driven updates)
+  const onlinePlayers = gameMetadata?.activePlayerCount ?? 0
+  const totalPlayers = gameMetadata?.playerCount ?? 0
 
   return (
     <div className="game-info">

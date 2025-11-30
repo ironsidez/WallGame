@@ -163,3 +163,32 @@ export interface GameAction {
   timestamp: Date;
   data: any;
 }
+
+// ============================================
+// EVENT-DRIVEN UPDATES (Lobby & Game Metadata)
+// ============================================
+
+/**
+ * Game metadata - used for lobby display and in-game info panel
+ * Single source of truth for game information across the app
+ */
+export interface GameMetadata {
+  id: string;
+  name: string;
+  status: GameStatus;
+  playerCount: number;        // Total participants
+  activePlayerCount: number;  // Currently connected
+  maxPlayers: number;
+  mapWidth: number;
+  mapHeight: number;
+  popTicksRemaining: number | null;
+  createdAt: Date;
+}
+
+/**
+ * Lobby state update - sent to clients in the lobby room
+ */
+export interface LobbyUpdate {
+  games: GameMetadata[];
+  onlinePlayerCount: number;
+}

@@ -2,19 +2,9 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import { io } from 'socket.io-client'
-import { TerrainWeights, clientLogger } from '@wallgame/shared'
+import { TerrainWeights, GameMetadata, LobbyUpdate, getLogger } from '@wallgame/shared'
 
-interface GameRoom {
-  id: string
-  name: string
-  current_players: string // Format: "1/3" (online/total)
-  online_players: number
-  total_players: number
-  maxPlayers: number
-  status: 'waiting' | 'playing' | 'finished'
-  createdAt: string
-  isParticipating?: boolean
-}
+const clientLogger = getLogger('client');
 
 interface GameSettings {
   mapSource: 'custom'  // Currently only custom supported
@@ -60,7 +50,8 @@ interface GameLobbyProps {
 export function GameLobby({ user, onLogout }: GameLobbyProps) {
   const navigate = useNavigate()
   const { token } = useAuthStore()
-  const [games, setGames] = useState<GameRoom[]>([])
+  const [games, setGames] = useState<GameMetadata[]>([])
+  const [onlinePlayerCount, setOnlinePlayerCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [newGameName, setNewGameName] = useState('')
@@ -76,12 +67,20 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
     
     newSocket.on('connect', () => {
       clientLogger.info('✅ Connected to lobby')
-      // Request games list
-      newSocket.emit('get-games')
+      // Join lobby room for real-time updates
+      newSocket.emit('lobby:join')
     })
     
-    // Listen for games list updates
-    newSocket.on('games-list', (gameList: GameRoom[]) => {
+    // Listen for lobby updates (new event-driven system)
+    newSocket.on('lobby:update', (update: LobbyUpdate) => {
+      clientLogger.info('📡 Lobby update:', update.games.length, 'games,', update.onlinePlayerCount, 'online')
+      setGames(update.games)
+      setOnlinePlayerCount(update.onlinePlayerCount)
+      setLoading(false)
+    })
+    
+    // Legacy games-list support (fallback)
+    newSocket.on('games-list', (gameList: GameMetadata[]) => {
       clientLogger.info('📡 Received games list:', gameList.length, 'games')
       setGames(gameList)
       setLoading(false)
@@ -103,6 +102,7 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
     
     // Cleanup on unmount
     return () => {
+      newSocket.emit('lobby:leave')
       newSocket.close()
     }
   }, [token])
@@ -164,7 +164,7 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
       <div className="lobby-header">
         <div className="lobby-title">
           <h1>🏰 WallGame Lobby</h1>
-          <p>Welcome back, <strong>{user?.username}</strong>!</p>
+          <p>Welcome back, <strong>{user?.username}</strong>! <span className="online-count">({onlinePlayerCount} players online)</span></p>
         </div>
         <button onClick={handleLogout} className="btn-secondary">
           Logout
@@ -368,11 +368,14 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
                     <h3>{game.name}</h3>
                     <div className="game-stats">
                       <span className="player-count">
-                        👥 {game.current_players} players
+                        👥 {game.activePlayerCount}/{game.playerCount} players ({game.maxPlayers} max)
                       </span>
                       <span className={`game-status status-${game.status}`}>
                         {game.status}
                       </span>
+                    </div>
+                    <div className="game-map-size">
+                      🗺️ {game.mapWidth}×{game.mapHeight}
                     </div>
                     <div className="game-time">
                       Created: {new Date(game.createdAt).toLocaleString()}
@@ -384,13 +387,11 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
                       className="btn-primary"
                       disabled={game.status === 'finished'}
                     >
-                      {game.isParticipating 
-                        ? 'Open Game' 
-                        : game.status === 'waiting' 
+                      {game.status === 'paused' 
+                        ? 'Join Game' 
+                        : game.status === 'playing' 
                           ? 'Join Game' 
-                          : game.status === 'playing' 
-                            ? 'Spectate' 
-                            : 'Finished'}
+                          : 'Finished'}
                     </button>
                     {user?.isAdmin && (
                       <button

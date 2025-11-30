@@ -1,6 +1,8 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { useGameStore } from '../stores'
-import { TerrainType, clientLogger } from '@wallgame/shared'
+import { TerrainType, getLogger } from '@wallgame/shared'
+
+const clientLogger = getLogger('client');
 
 const TILE_SIZE = 32
 const VIEWPORT_PADDING = 2 // tiles of padding around viewport
