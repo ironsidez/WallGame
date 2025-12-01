@@ -188,41 +188,7 @@ Perform a game action (place structure, etc.).
 }
 ```
 
-#### chat-message
-Send a chat message to the game.
-```json
-{
-  "gameId": "game-uuid",
-  "playerId": "player-uuid",
-  "message": "Hello everyone!"
-}
-```
-
-#### preview-structure
-Show structure placement preview to other players.
-```json
-{
-  "gameId": "game-uuid",
-  "positions": [{"x": 0, "y": 0}],
-  "structureType": "fortress"
-}
-```
-
-### Server to Client Events
-
-#### game-state
-Initial game state when joining.
-```json
-{
-  "id": "game-uuid",
-  "players": {},
-  "structures": {},
-  "grid": {},
-  "gamePhase": "active"
-}
-```
-
-#### game-state-update
+### Server to Client Events (Legacy - Game Updates)
 Real-time game state updates.
 ```json
 {

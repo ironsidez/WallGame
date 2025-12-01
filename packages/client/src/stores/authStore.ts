@@ -50,6 +50,9 @@ export const useAuthStore = create<AuthState>()(
             token: data.token,
             isAuthenticated: true,
           })
+          
+          // Connect to socket immediately after successful login
+          useGameStore.getState().connectSocket(data.token)
         } catch (error) {
           set({ user: null, token: null, isAuthenticated: false })
           throw error
@@ -116,6 +119,9 @@ export const useAuthStore = create<AuthState>()(
 
           const user = await response.json()
           set({ user, isAuthenticated: true })
+          
+          // Reconnect socket if we have a valid token (e.g., page reload)
+          useGameStore.getState().connectSocket(token)
         } catch (error) {
           set({ user: null, token: null, isAuthenticated: false })
         }

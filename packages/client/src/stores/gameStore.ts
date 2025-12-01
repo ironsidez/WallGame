@@ -24,10 +24,10 @@ interface GameStore {
   selectedBuilding: string | null
   
   // Actions
-  connectSocket: () => void
+  connectSocket: (token?: string) => void
   disconnectSocket: () => void
   joinGame: (gameId: string) => void
-  leaveGame: () => void
+  leaveGame: () => Promise<void>
   selectUnit: (unitId: string | null) => void
   selectCity: (cityId: string | null) => void
   selectBuilding: (buildingId: string | null) => void
@@ -48,23 +48,34 @@ export const useGameStore = create<GameStore>()(
       selectedCity: null,
       selectedBuilding: null,
 
-  connectSocket: () => {
+  connectSocket: (token?: string) => {
     const { socket } = get()
-    if (socket?.connected) return
-
-    // Get the token from the auth store
-    const token = useAuthStore.getState().token
-    clientLogger.debug('🔍 Token from authStore:', token ? 'FOUND' : 'NOT FOUND')
     
-    if (token) {
-      clientLogger.debug('🔍 Token preview:', token.substring(0, 50) + '...')
+    // If already connected, don't create a new socket
+    if (socket?.connected) {
+      clientLogger.debug('✅ Socket already connected, reusing existing connection')
+      return
+    }
+    
+    // If socket exists but disconnected, clean it up first
+    if (socket) {
+      clientLogger.debug('🧹 Cleaning up disconnected socket')
+      socket.removeAllListeners()
+      socket.disconnect()
     }
 
-    clientLogger.debug('🔍 Final token for socket:', token ? 'YES' : 'NO')
+    // Get the token from parameter or auth store
+    const authToken = token || useAuthStore.getState().token
+    if (!authToken) {
+      clientLogger.error('❌ No token available for socket connection')
+      return
+    }
+    
+    clientLogger.info('🔌 Creating new socket connection')
 
     const newSocket = io('http://localhost:3001', {
       auth: {
-        token: token
+        token: authToken
       }
     })
 
@@ -151,36 +162,46 @@ export const useGameStore = create<GameStore>()(
 
   joinGame: (gameId: string) => {
     const { socket } = get()
+    clientLogger.info(`🎯 joinGame called - socket exists: ${!!socket}, connected: ${socket?.connected}`)
     if (socket) {
+      const listenerCount = socket.listeners('join-game').length
+      clientLogger.info(`📡 Emitting join-game for ${gameId} (server has ${listenerCount} listeners?)`)
       socket.emit('join-game', { gameId })
+      clientLogger.info(`✅ join-game emitted successfully`)
       set({ 
         currentGameId: gameId, // Save the game ID to localStorage
         selectedUnit: null, 
         selectedCity: null, 
         selectedBuilding: null 
       })
+    } else {
+      clientLogger.warn('❌ Cannot join game - no socket available')
     }
   },
 
   leaveGame: () => {
     const { socket, currentGameId } = get()
     if (socket && currentGameId) {
-      socket.emit('leave-game')
-      
-      set({ 
-        currentGame: null,
-        currentGameId: null,
+      return new Promise<void>((resolve) => {
+        socket.emit('leave-game', (response: { success: boolean }) => {
+          clientLogger.info('✅ Leave game acknowledged:', response)
+          resolve()
+        })
+        
+        set({ 
+          currentGame: null,
+          currentGameId: null,
         gameMetadata: null,
         players: [], 
         currentPlayer: null,
-        selectedUnit: null,
-        selectedCity: null,
-        selectedBuilding: null
+        selectedUnit: null, 
+        selectedCity: null, 
+        selectedBuilding: null 
+      })
       })
     }
-  },
-
-  selectUnit: (unitId: string | null) => {
+    return Promise.resolve()
+  },  selectUnit: (unitId: string | null) => {
     set({ selectedUnit: unitId, selectedCity: null, selectedBuilding: null })
   },
 

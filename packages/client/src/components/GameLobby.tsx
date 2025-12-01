@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuthStore } from '../stores/authStore'
-import { io } from 'socket.io-client'
+import { useGameStore } from '../stores/gameStore'
 import { TerrainWeights, GameMetadata, LobbyUpdate, getLogger } from '@wallgame/shared'
 
 const clientLogger = getLogger('client');
@@ -49,7 +48,7 @@ interface GameLobbyProps {
 
 export function GameLobby({ user, onLogout }: GameLobbyProps) {
   const navigate = useNavigate()
-  const { token } = useAuthStore()
+  const { socket } = useGameStore()
   const [games, setGames] = useState<GameMetadata[]>([])
   const [onlinePlayerCount, setOnlinePlayerCount] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -57,55 +56,67 @@ export function GameLobby({ user, onLogout }: GameLobbyProps) {
   const [newGameName, setNewGameName] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS)
-  const [socket, setSocket] = useState<any>(null)
 
   useEffect(() => {
-    // Connect to socket for lobby
-    const newSocket = io('http://localhost:3001', {
-      auth: { token }
-    })
+    if (!socket) {
+      clientLogger.warn('⚠️ No socket available in GameLobby')
+      return
+    }
     
-    newSocket.on('connect', () => {
-      clientLogger.info('✅ Connected to lobby')
-      // Join lobby room for real-time updates
-      newSocket.emit('lobby:join')
-    })
+    clientLogger.info('📡 Setting up lobby listeners')
     
-    // Listen for lobby updates (new event-driven system)
-    newSocket.on('lobby:update', (update: LobbyUpdate) => {
+    // Join lobby room
+    socket.emit('lobby:join')
+    
+    // Listen for lobby updates
+    const handleLobbyUpdate = (update: LobbyUpdate) => {
       clientLogger.info('📡 Lobby update:', update.games.length, 'games,', update.onlinePlayerCount, 'online')
       setGames(update.games)
       setOnlinePlayerCount(update.onlinePlayerCount)
       setLoading(false)
-    })
+    }
     
-    // Legacy games-list support (fallback)
-    newSocket.on('games-list', (gameList: GameMetadata[]) => {
-      clientLogger.info('📡 Received games list:', gameList.length, 'games')
-      setGames(gameList)
-      setLoading(false)
-    })
+    // Listen for player count updates (lightweight)
+    const handlePlayerCount = (data: { onlinePlayerCount: number }) => {
+      clientLogger.info('📡 Player count update:', data.onlinePlayerCount, 'online')
+      setOnlinePlayerCount(data.onlinePlayerCount)
+    }
     
-    newSocket.on('game-created', (data: { gameId: string }) => {
+    // Listen for single game updates (when player joins/leaves a game)
+    const handleGameUpdated = (updatedGame: GameMetadata) => {
+      clientLogger.info('📡 Game updated:', updatedGame.name, `(${updatedGame.activePlayerCount}/${updatedGame.playerCount})`)
+      setGames(prev => prev.map(g => g.id === updatedGame.id ? updatedGame : g))
+    }
+    
+    const handleGameCreated = (data: { gameId: string }) => {
       clientLogger.info('✅ Game created:', data.gameId)
       setNewGameName('')
       setCreating(false)
-    })
+    }
     
-    newSocket.on('error', (error: { message: string }) => {
+    const handleError = (error: { message: string }) => {
       clientLogger.error('❌ Socket error:', error.message)
       alert(error.message)
       setCreating(false)
-    })
+    }
     
-    setSocket(newSocket)
+    socket.on('lobby:update', handleLobbyUpdate)
+    socket.on('lobby:player-count', handlePlayerCount)
+    socket.on('lobby:game-updated', handleGameUpdated)
+    socket.on('game-created', handleGameCreated)
+    socket.on('error', handleError)
     
     // Cleanup on unmount
     return () => {
-      newSocket.emit('lobby:leave')
-      newSocket.close()
+      socket.off('lobby:update', handleLobbyUpdate)
+      socket.off('lobby:player-count', handlePlayerCount)
+      socket.off('lobby:game-updated', handleGameUpdated)
+      socket.off('game-created', handleGameCreated)
+      socket.off('error', handleError)
+      socket.emit('lobby:leave')
+      clientLogger.info('🧹 Cleaned up lobby listeners')
     }
-  }, [token])
+  }, [socket])
 
   const createGame = (e: React.FormEvent) => {
     e.preventDefault()

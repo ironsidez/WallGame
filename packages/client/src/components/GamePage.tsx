@@ -6,48 +6,52 @@ import { GameGrid } from './GameGrid'
 import { SelectedEntity } from './SelectedEntity'
 import { GameInfo } from './GameInfo'
 import { ChatPanel } from './ChatPanel'
+import { getLogger } from '@wallgame/shared'
+
+const clientLogger = getLogger('client')
 
 export function GamePage() {
   const { gameId } = useParams<{ gameId: string }>()
   const navigate = useNavigate()
   
   const {
-    connectSocket,
-    disconnectSocket,
     joinGame,
     leaveGame,
     currentGame,
-    connected
+    connected,
+    socket
   } = useGameStore()
 
-  const { isAuthenticated, token, user } = useAuthStore()
+  const { isAuthenticated, user } = useAuthStore()
 
-  // Initialize socket connection and join game - only once when gameId is set
+  // Join game when component mounts
   useEffect(() => {
-    if (!gameId || !user || !isAuthenticated || !token) return
+    clientLogger.info(`🎮 GamePage effect - gameId: ${gameId}, user: ${user?.username}, auth: ${isAuthenticated}, socket: ${!!socket}, connected: ${connected}`)
+    
+    if (!gameId || !user || !isAuthenticated || !socket || !connected) {
+      clientLogger.warn('⏸️ GamePage waiting for requirements')
+      return
+    }
 
-    // Connect and join game
-    connectSocket()
+    // Join game room (socket already connected from login)
+    clientLogger.info(`⏰ Scheduling join-game for ${gameId.substring(0, 8)}`)
     const joinTimer = setTimeout(() => {
+      clientLogger.info(`📤 Calling joinGame(${gameId.substring(0, 8)})`)
       joinGame(gameId)
     }, 100)
 
     return () => {
       clearTimeout(joinTimer)
-      // Only cleanup when actually leaving the page (unmounting)
+      // Leave game room when unmounting (but keep socket alive)
+      clientLogger.info('🧹 GamePage cleanup - calling leaveGame()')
+      // Cleanup can't be async, but we'll let leaveGame complete in background
+      leaveGame().catch(err => clientLogger.error('Error in cleanup:', err))
     }
-  }, [gameId]) // Only depend on gameId - user/token shouldn't change while on page
+  }, [gameId, socket, connected, user, isAuthenticated, joinGame, leaveGame])
 
-  // Cleanup when leaving the page (separate effect)
-  useEffect(() => {
-    return () => {
-      leaveGame()
-      disconnectSocket()
-    }
-  }, []) // Empty deps = only runs on unmount
-
-  const handleExitGame = () => {
-    leaveGame()
+  const handleExitGame = async () => {
+    // Wait for leave-game to complete before navigating
+    await leaveGame()
     navigate('/lobby')
   }
 
