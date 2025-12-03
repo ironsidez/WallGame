@@ -286,6 +286,16 @@ export class DatabaseManager {
 
     const query = 'SELECT * FROM games WHERE id = $1';
     const result = await this.pool.query(query, [gameId]);
+    
+    if (result.rows[0]) {
+      const game = result.rows[0];
+      console.log('🔍 DatabaseManager.getGameById - Raw DB result:');
+      console.log('   terrain_data type:', typeof game.terrain_data);
+      console.log('   terrain_data is array?', Array.isArray(game.terrain_data));
+      console.log('   terrain_data length:', game.terrain_data?.length);
+      console.log('   terrain_data sample:', JSON.stringify(game.terrain_data)?.substring(0, 100));
+    }
+    
     return result.rows[0] || null;
   }
 

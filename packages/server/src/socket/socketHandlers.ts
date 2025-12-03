@@ -33,13 +33,6 @@ function serializeGameState(gameState: GameState): any {
 }
 
 /**
- * Convert map data to terrain data array
- */
-function convertTerrainToData(mapData: { terrain: string[][] }): string[][] {
-  return mapData.terrain;
-}
-
-/**
  * Build lobby update and broadcast to all clients in lobby room
  * Use this when games list changes (created/deleted)
  */
@@ -222,7 +215,7 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
           data.settings?.terrainWeights
         );
         
-        const terrainData = convertTerrainToData(mapData);
+        const terrainData = mapData.terrain;
         
         // Save to database
         await databaseManager.createGame(
@@ -317,8 +310,13 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
         
         currentGameId = gameId;    
         
+        // Debug: Check terrain data before serialization
+        socketLogger.info(`📊 Game state terrain: ${gameState.terrainData?.length}x${gameState.terrainData?.[0]?.length}, sample: ${gameState.terrainData?.[0]?.slice(0, 10).join('')}`);
+        
         // Send game state to joining player
-        socket.emit('game-state', serializeGameState(gameState));
+        const serialized = serializeGameState(gameState);
+        socketLogger.info(`📊 Serialized terrain: ${serialized.terrainData?.length}x${serialized.terrainData?.[0]?.length}`);
+        socket.emit('game-state', serialized);
         
         // Notify others a player joined
         socket.to(`game:${gameId}`).emit('player-joined', { playerId: currentUserId });
@@ -355,10 +353,7 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
     });
     
     // Disconnect cleanup
-    socket.on('disconnect', async () => {
-      // Broadcast updated player count to lobby
-      broadcastPlayerCount(io, socketLogger);
-      
+    socket.on('disconnect', async () => { 
       if (currentUserId) {
         // Remove from user tracking
         userSockets.delete(currentUserId);
@@ -372,6 +367,8 @@ export function setupSocketHandlers(io: SocketServer, gameManager: GameManager, 
       }
 
       socketLogger.info('🔌 Disconnected');
+      // Broadcast updated player count to lobby
+      broadcastPlayerCount(io, socketLogger);
     });
 
     // ===== INITIALIZATION (after handlers are registered) ===== 

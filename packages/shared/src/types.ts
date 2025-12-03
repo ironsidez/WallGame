@@ -54,14 +54,14 @@ export interface Game {
 // ============================================
 
 export enum TerrainType {
-  PLAINS = 'plains',
-  FOREST = 'forest',
-  HILLS = 'hills',
-  MOUNTAIN = 'mountain',
-  DESERT = 'desert',
-  SWAMP = 'swamp',
-  RIVER = 'river',
-  OCEAN = 'ocean'
+  PLAINS = 'P',
+  FOREST = 'F',
+  HILLS = 'H',
+  MOUNTAIN = 'M',
+  DESERT = 'D',
+  SWAMP = 'S',
+  RIVER = 'R',
+  OCEAN = 'O'
 }
 
 /**

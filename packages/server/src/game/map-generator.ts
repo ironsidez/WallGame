@@ -54,16 +54,21 @@ export function generateRandomMap(
   
   console.log(`🗺️  Generating ${width}×${height} map with noise-based terrain...`);
   const startTime = Date.now();
+  const totalCells = width * height;
   
+  console.log('📊 Step 1/4: Generating elevation map...');
   // Generate elevation map (0-1 values) - controls mountains, hills, water
   const elevationMap = generateNoiseMap(width, height, random, 0.015);
   
+  console.log('📊 Step 2/4: Generating moisture map...');
   // Generate moisture map (0-1 values) - controls forests, deserts, swamps
   const moistureMap = generateNoiseMap(width, height, random, 0.02);
   
+  console.log('📊 Step 3/4: Generating temperature map...');
   // Generate temperature map (0-1 values) - adds variety to biomes
   const temperatureMap = generateNoiseMap(width, height, random, 0.01);
   
+  console.log('📊 Step 4/4: Converting noise to terrain...');
   // Convert noise to terrain using frequency weights
   for (let y = 0; y < height; y++) {
     const row: TerrainType[] = [];
@@ -206,7 +211,7 @@ function generateNoiseMap(
   const noise: number[][] = [];
   
   // Pre-generate random offsets for each octave (for variety)
-  const octaveCount = 5; // More octaves = more detail
+  const octaveCount = 3; // Balanced detail/performance (was 5)
   const octaveOffsets: { x: number; y: number }[] = [];
   for (let i = 0; i < octaveCount; i++) {
     octaveOffsets.push({
